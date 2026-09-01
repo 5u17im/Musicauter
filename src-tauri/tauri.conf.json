@@ -1,0 +1,47 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Audionave",
+  "version": "0.1.0",
+"identifier": "com.audionave.desktop",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Audionave",
+        "width": 1180,
+        "height": 780,
+        "minWidth": 860,
+        "minHeight": 600,
+        "center": true,
+        "resizable": true,
+        "backgroundColor": "#101318"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+"bundle": {
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "category": "Music",
+    "shortDescription": "Reproductor y descargador de musica con recomendaciones",
+    "longDescription": "Descarga playlists de YouTube, reproduce tu musica y descubre canciones similares.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "binaries/yt-dlp.exe": "binaries/yt-dlp.exe",
+      "binaries/ffmpeg.exe": "binaries/ffmpeg.exe"
+    }
+  }
+}

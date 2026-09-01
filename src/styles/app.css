@@ -1,0 +1,88 @@
+.app {
+  height: 100vh;
+  display: grid;
+  grid-template-rows: var(--topbar-h) 1fr var(--player-h);
+  overflow: hidden;
+  position: relative;
+}
+
+.app-body {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) 1fr;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-main {
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-6) var(--space-7);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Encabezados y jerarquía de vistas */
+.section-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+  flex-wrap: wrap;
+}
+
+.section-title {
+  font-family: var(--font-display);
+  font-size: var(--text-2xl);
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.section-kicker {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-faint);
+  font-weight: 700;
+  margin-bottom: var(--space-1);
+}
+
+.summary-strip {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-5);
+  flex-wrap: wrap;
+}
+
+.grid {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.grid-cards {
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+}
+
+.muted {
+  color: var(--text-dim);
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-7) var(--space-4);
+  text-align: center;
+  color: var(--text-dim);
+  gap: var(--space-3);
+}
+
+.empty-icon {
+  width: 48px;
+  height: 48px;
+  color: var(--text-faint);
+  opacity: 0.6;
+}

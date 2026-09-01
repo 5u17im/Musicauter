@@ -1,0 +1,160 @@
+/* =========================================================
+   Audionave — Modales, Diálogos, Drawer y Toasts
+   ========================================================= */
+
+/* Backdrop de Modales */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--overlay);
+  -webkit-backdrop-filter: blur(var(--glass-blur-sm));
+  backdrop-filter: blur(var(--glass-blur-sm));
+  display: grid;
+  place-items: center;
+  z-index: 100;
+  padding: var(--space-4);
+  animation: fadeIn 0.2s ease-out;
+}
+
+.modal-content {
+  background: var(--surface-solid);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-elevated);
+  width: 100%;
+  max-width: 34rem;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: scaleUp 0.22s var(--ease);
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--line);
+}
+
+.modal-title {
+  font-size: var(--text-lg);
+  font-weight: 700;
+  color: var(--text);
+}
+
+.modal-body {
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--line);
+  background: var(--surface-glass);
+}
+
+/* Panel Drawer de Cola */
+.queue-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: var(--player-h);
+  width: 24rem;
+  background: var(--surface-elevated);
+  -webkit-backdrop-filter: var(--glass-sat) blur(var(--glass-blur));
+  backdrop-filter: var(--glass-sat) blur(var(--glass-blur));
+  border-left: 1px solid var(--line);
+  box-shadow: var(--shadow-elevated);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  animation: slideLeft 0.25s var(--ease);
+}
+
+.queue-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--line);
+}
+
+.queue-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* Toast Notifications */
+.toast-container {
+  position: fixed;
+  bottom: calc(var(--player-h) + var(--space-4));
+  right: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  z-index: 999;
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-elevated);
+  -webkit-backdrop-filter: var(--glass-sat) blur(var(--glass-blur));
+  backdrop-filter: var(--glass-sat) blur(var(--glass-blur));
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: var(--text-sm);
+  min-width: 18rem;
+  max-width: 26rem;
+  animation: toastIn 0.25s var(--ease);
+}
+
+.toast-icon {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+}
+
+.toast-info { border-left: 4px solid var(--accent); }
+.toast-success { border-left: 4px solid var(--success); }
+.toast-error { border-left: 4px solid var(--danger); }
+.toast-download { border-left: 4px solid var(--accent); }
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scaleUp {
+  from { opacity: 0; transform: scale(0.96) translateY(6px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes slideLeft {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(12px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}

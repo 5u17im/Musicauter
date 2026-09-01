@@ -1,0 +1,35 @@
+rustywind root Rust
+__pycache__/
+*.pyc
+
+# Rust
+src-tauri/target/
+src-tauri/rusty-tools.DS_Store
+target/
+.rs
+
+# Binarios embebidos (se bajan con scripts/fetch-binaries.ps1)
+src-tauri/binaries/
+
+# Tauri / scripts
+scripts/
+src-tauri/gen/
+CSharp/
+.vscode/
+.svelte-tmp/
+.tsbuildinfo
+.btmp.*
+
+# Frontend
+node_modules/
+public-/
+
+# System
+.DS_Store
+Thumbs.db
+*.sqlite
+*.sqlite3
+
+# Local settings
+local.properties
+appsettings.json
