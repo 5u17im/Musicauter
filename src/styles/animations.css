@@ -1,0 +1,305 @@
+/* =========================================================
+   Audionave — Animaciones y microinteracciones
+   Todas respetan prefers-reduced-motion al final del archivo.
+   ========================================================= */
+
+@keyframes audionave-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes audionave-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* Entrada de una vista completa */
+@keyframes view-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Entrada de una fila o tarjeta */
+@keyframes row-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Aparicion con rebote suave */
+@keyframes pop-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.02);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Latido del corazon al marcar favorito */
+@keyframes heart-pop {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.35);
+  }
+  60% {
+    transform: scale(0.92);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Brillo que recorre las barras de progreso activas */
+@keyframes progress-shimmer {
+  from {
+    background-position: -140% 0;
+  }
+  to {
+    background-position: 240% 0;
+  }
+}
+
+/* Barrido de luz al pasar el cursor por una tarjeta */
+@keyframes card-sheen {
+  from {
+    transform: translateX(-120%) skewX(-18deg);
+  }
+  to {
+    transform: translateX(220%) skewX(-18deg);
+  }
+}
+
+/* Flotacion suave del icono vacio */
+@keyframes float-soft {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes ring-pulse {
+  0% {
+    box-shadow: 0 0 0 0 var(--accent-glow);
+  }
+  70% {
+    box-shadow: 0 0 0 10px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+/* --- Utilidades --- */
+.anim-spin {
+  animation: audionave-spin 900ms linear infinite;
+}
+
+.anim-pulse {
+  animation: audionave-pulse 1.4s ease-in-out infinite;
+}
+
+.anim-float {
+  animation: float-soft 3.2s ease-in-out infinite;
+}
+
+/* --- Entrada de vistas --- */
+.app-main > section {
+  animation: view-in var(--dur-norm) var(--ease) both;
+}
+
+/* --- Filas y tarjetas escalonadas --- */
+.track-row {
+  animation: row-in 320ms var(--ease) both;
+  animation-delay: calc(var(--row-index, 0) * 16ms);
+}
+
+.glass-card {
+  transition: transform var(--dur-norm) var(--ease),
+    box-shadow var(--dur-norm) var(--ease),
+    border-color var(--dur-norm) var(--ease);
+  position: relative;
+}
+
+.glass-card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow);
+  border-color: var(--line-strong);
+}
+
+/* Barrido de luz en las tarjetas de contenido */
+.grid-cards .glass-card {
+  overflow: hidden;
+}
+
+.grid-cards .glass-card::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--text) 8%, transparent),
+    transparent
+  );
+  opacity: 0;
+  pointer-events: none;
+}
+
+.grid-cards .glass-card:hover::after {
+  opacity: 1;
+  animation: card-sheen 900ms var(--ease);
+}
+
+/* --- Botones --- */
+.btn,
+.icon-btn-sm,
+.t-btn,
+.side-item,
+.mini-btn {
+  transition: background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+
+.btn:active:not(:disabled),
+.icon-btn-sm:active:not(:disabled),
+.t-btn:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+/* El boton principal del reproductor respira mientras suena */
+@keyframes playing-ring {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--accent-glow);
+  }
+  50% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+}
+
+.t-btn.t-btn-main[data-playing="true"] {
+  animation: playing-ring 2.4s ease-in-out infinite;
+}
+
+/* --- Progreso --- */
+.progress-bar {
+  width: 100%;
+  height: 4px;
+  background: var(--line);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--radius-full);
+  transition: width 350ms var(--ease);
+}
+
+.progress-active .progress-fill,
+.scrub-fill-live {
+  background-image: linear-gradient(
+    100deg,
+    var(--accent) 0%,
+    var(--accent-strong) 35%,
+    var(--accent) 70%
+  );
+  background-size: 220% 100%;
+  animation: progress-shimmer 2.4s linear infinite;
+}
+
+/* --- Estados vacios --- */
+.empty-state .empty-icon {
+  animation: float-soft 3.4s ease-in-out infinite;
+}
+
+/* --- Tarjetas de resultado --- */
+.result-card {
+  animation: pop-in 300ms var(--ease) both;
+}
+
+/* --- Transicion de tema --- */
+html {
+  transition: background-color var(--dur-slow) var(--ease);
+}
+
+body,
+.app,
+.topbar,
+.sidebar,
+.playerbar,
+.glass-card {
+  transition: background-color var(--dur-slow) var(--ease),
+    color var(--dur-slow) var(--ease),
+    border-color var(--dur-slow) var(--ease);
+}
+
+/* --- Barra de desplazamiento --- */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: var(--radius-full);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+  background-clip: content-box;
+}
+
+/* =========================================================
+   Accesibilidad: sin movimiento si el usuario lo pide
+   ========================================================= */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

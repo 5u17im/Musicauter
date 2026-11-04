@@ -1,15 +1,6 @@
 import { useState } from "react";
-import {
-  IconAlertCircle,
-  IconCheck,
-  IconDownload,
-  IconLoader2,
-  IconMusic,
-  IconPlaylist,
-  IconSearch,
-  IconX,
-} from "@tabler/icons-react";
-import { scanPlaylist } from "../api";
+import { Icon } from "./ui/Icon";
+import { scanPlaylist, type ScannedPlaylist, type YtDlpEntry } from "../api";
 import { DownloadManager } from "../services/downloadManager";
 import { StorageService } from "../services/storage";
 import type { Playlist, Track } from "../types";
@@ -21,83 +12,109 @@ interface Props {
   onAdded?: (info: { title: string; count: number; isSingle: boolean }) => void;
 }
 
+function entryToTrack(
+  entry: YtDlpEntry,
+  index: number,
+  playlistUrl: string,
+  fallbackThumbnail?: string,
+  fallbackUploader?: string,
+): Track | null {
+  const youtubeId = typeof entry.id === "string" ? entry.id : "";
+  if (!youtubeId) return null;
+
+  return {
+    id: `yt-${youtubeId}`,
+    title: entry.title ?? `Pista ${index + 1}`,
+    artist: entry.uploader ?? entry.channel ?? fallbackUploader ?? "Artista desconocido",
+    album: undefined,
+    durationSeconds: entry.duration ?? 0,
+    downloaded: false,
+    artworkUrl: entry.thumbnail ?? entry.thumbnails?.[0]?.url ?? fallbackThumbnail,
+    youtubeId,
+    addedAt: Date.now(),
+    playlistUrl,
+  };
+}
+
 export function AddPlaylistModal({ isOpen, onClose, onAdded }: Props) {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [scanResult, setScanResult] = useState<any | null>(null);
+  const [scanResult, setScanResult] = useState<ScannedPlaylist | null>(null);
 
   if (!isOpen) return null;
 
-  const handleScan = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const reset = () => {
+    setUrl("");
+    setScanResult(null);
+    setError(null);
+  };
+
+  const handleScan = async (event: React.FormEvent) => {
+    event.preventDefault();
     if (!url.trim()) return;
 
     setLoading(true);
     setError(null);
     setScanResult(null);
 
+    const settings = StorageService.getSettings();
     try {
-      const res = await scanPlaylist(url.trim());
-      if (res.error) {
-        setError("No se pudo inspeccionar el enlace. Verifica la URL de YouTube.");
+      const result = await scanPlaylist(
+        url.trim(),
+        settings.browserAuth ? "browser" : "none",
+        settings.selectedBrowser,
+      );
+      if (result.entries.length === 0) {
+        setError("No se detectaron pistas en ese enlace. Comprueba que la URL sea publica y valida.");
       } else {
-        // Asegurar que entries tenga al menos el video individual si no vino como lista
-        if (!res.entries || res.entries.length === 0) {
-          if (res.id || res.title) {
-            res.entries = [
-              {
-                id: res.id,
-                title: res.title,
-                uploader: res.uploader || res.channel || res.artist || "Artista",
-                duration: res.duration || 0,
-                thumbnail: res.thumbnail,
-              },
-            ];
-          }
-        }
-        setScanResult(res);
+        setScanResult(result);
       }
-    } catch {
-      setError("Ocurrió un error al contactar el servicio de extracción.");
+    } catch (scanError) {
+      const raw = scanError instanceof Error ? scanError.message : String(scanError);
+      setError(
+        `No se pudo inspeccionar el enlace: ${raw.slice(0, 300)}`,
+      );
     } finally {
       setLoading(false);
     }
   };
 
+  const buildTracks = (): Track[] => {
+    if (!scanResult) return [];
+    return scanResult.entries
+      .map((entry, index) =>
+        entryToTrack(
+          entry,
+          index,
+          url.trim(),
+          scanResult.thumbnail,
+          scanResult.uploader ?? scanResult.channel ?? scanResult.artist,
+        ),
+      )
+      .filter((track): track is Track => track !== null);
+  };
+
   const handleSave = (downloadNow: boolean) => {
-    if (!scanResult) return;
-
-    const rawEntries = scanResult.entries || (scanResult.id ? [scanResult] : []);
-    const tracks: Track[] = rawEntries.map((item: any, idx: number) => ({
-      id: `yt-${item.id || idx}-${Date.now()}`,
-      title: item.title || "Sin título",
-      artist: item.uploader || scanResult.uploader || "Artista desconocido",
-      durationSeconds: item.duration || 0,
-      downloaded: false,
-      youtubeId: item.id,
-      artworkUrl: item.thumbnail || scanResult.thumbnail,
-      addedAt: Date.now(),
-    }));
-
+    const tracks = buildTracks();
     if (tracks.length === 0) {
-      setError("No se detectaron pistas válidas en la URL proporcionada.");
+      setError("No se detectaron pistas validas en la URL proporcionada.");
       return;
     }
 
-    // Guardar pistas en biblioteca
-    tracks.forEach((t) => StorageService.addTrack(t));
+    StorageService.addTracks(tracks);
 
-    const isSingle = tracks.length === 1;
+    const isSingle = tracks.length === 1 && !url.includes("playlist");
 
-    // Si es una playlist (más de 1 pista o explícitamente lista), guardarla en Playlists
-    if (!isSingle || url.includes("playlist")) {
-      const newPlaylist: Playlist = {
-        id: `pl-${Date.now()}`,
+    if (!isSingle) {
+      const playlist: Playlist = {
+        id: `pl-${scanResult?.id ?? Date.now()}`,
         url: url.trim(),
-        name: scanResult.title || "Nueva Playlist",
-        description: `Canal: ${scanResult.uploader || "YouTube"}`,
-        artworkUrl: scanResult.thumbnail || tracks[0]?.artworkUrl,
+        name: scanResult?.title ?? "Nueva playlist",
+        description: scanResult?.uploader
+          ? `Canal: ${scanResult.uploader}`
+          : undefined,
+        artworkUrl: scanResult?.thumbnail ?? tracks[0]?.artworkUrl,
         totalTracks: tracks.length,
         downloadedCount: 0,
         newTracks: tracks.length,
@@ -105,38 +122,33 @@ export function AddPlaylistModal({ isOpen, onClose, onAdded }: Props) {
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
-      StorageService.addPlaylist(newPlaylist);
+      StorageService.addPlaylist(playlist);
     }
 
-    if (downloadNow) {
-      DownloadManager.enqueueTracks(tracks);
-    }
+    if (downloadNow) DownloadManager.enqueueTracks(tracks);
 
-    if (onAdded) {
-      onAdded({
-        title: tracks[0]?.title || scanResult.title || "Canción",
-        count: tracks.length,
-        isSingle,
-      });
-    }
+    onAdded?.({
+      title: scanResult?.title ?? tracks[0]?.title ?? "Cancion",
+      count: tracks.length,
+      isSingle,
+    });
 
-    setUrl("");
-    setScanResult(null);
+    reset();
     onClose();
   };
 
-  const entriesCount = scanResult?.entries?.length || (scanResult?.id ? 1 : 0);
+  const entriesCount = scanResult?.entries.length ?? 0;
 
   return (
     <div className="modal-backdrop" onClick={onClose} role="dialog" aria-modal="true">
-      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-content" onClick={(event) => event.stopPropagation()}>
         <div className="modal-head">
           <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-            <IconPlaylist size={22} stroke={1.75} color="var(--accent)" />
-            <h2 className="modal-title">Añadir Canción o Playlist por URL</h2>
+            <Icon icon="solar:playlist-bold" size={22} color="var(--accent)" />
+            <h2 className="modal-title">Añadir cancion o playlist por URL</h2>
           </div>
-          <button className="icon-btn-sm" onClick={onClose} aria-label="Cerrar ventana modal">
-            <IconX size={18} stroke={1.75} />
+          <button className="icon-btn-sm" onClick={onClose} aria-label="Cerrar">
+            <Icon icon="solar:close-linear" size={18} />
           </button>
         </div>
 
@@ -145,17 +157,17 @@ export function AddPlaylistModal({ isOpen, onClose, onAdded }: Props) {
             <input
               className="field"
               type="url"
-              placeholder="https://www.youtube.com/watch?v=... o playlist"
+              placeholder="https://www.youtube.com/watch?v=... o .../playlist?list=..."
               value={url}
-              onChange={(e) => setUrl(e.target.value)}
+              onChange={(event) => setUrl(event.target.value)}
               required
               aria-label="URL de YouTube"
             />
             <button className="btn" type="submit" disabled={loading}>
               {loading ? (
-                <IconLoader2 size={18} stroke={2} className="anim-pulse" />
+                <Icon icon="solar:restart-bold" size={18} className="anim-pulse" />
               ) : (
-                <IconSearch size={18} stroke={2} />
+                <Icon icon="solar:magnifier-linear" size={18} />
               )}
               <span>{loading ? "Explorando..." : "Explorar"}</span>
             </button>
@@ -174,7 +186,7 @@ export function AddPlaylistModal({ isOpen, onClose, onAdded }: Props) {
                 fontSize: "var(--text-sm)",
               }}
             >
-              <IconAlertCircle size={18} stroke={2} />
+              <Icon icon="solar:danger-circle-bold" size={18} />
               <span>{error}</span>
             </div>
           )}
@@ -183,23 +195,13 @@ export function AddPlaylistModal({ isOpen, onClose, onAdded }: Props) {
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
               <div
                 className="glass-card"
-                style={{
-                  display: "flex",
-                  gap: "var(--space-4)",
-                  alignItems: "center",
-                  padding: "var(--space-3) var(--space-4)",
-                }}
+                style={{ display: "flex", gap: "var(--space-4)", alignItems: "center", padding: "var(--space-3) var(--space-4)" }}
               >
                 {scanResult.thumbnail ? (
                   <img
                     src={scanResult.thumbnail}
-                    alt={scanResult.title}
-                    style={{
-                      width: "4.5rem",
-                      height: "4.5rem",
-                      borderRadius: "var(--radius-xs)",
-                      objectFit: "cover",
-                    }}
+                    alt={scanResult.title ?? "Portada"}
+                    style={{ width: "4.5rem", height: "4.5rem", borderRadius: "var(--radius-xs)", objectFit: "cover" }}
                   />
                 ) : (
                   <div
@@ -212,21 +214,22 @@ export function AddPlaylistModal({ isOpen, onClose, onAdded }: Props) {
                       placeItems: "center",
                     }}
                   >
-                    <IconMusic size={24} stroke={1.5} />
+                    <Icon icon="solar:music-note-bold" size={24} />
                   </div>
                 )}
-                <div>
+                <div style={{ minWidth: 0 }}>
                   <div style={{ fontWeight: 700, fontSize: "var(--text-base)" }}>
-                    {scanResult.title}
+                    {scanResult.title ?? "Sin titulo"}
                   </div>
                   <div className="muted" style={{ fontSize: "var(--text-xs)" }}>
-                    {scanResult.uploader} · {entriesCount} {entriesCount === 1 ? "canción detectada" : "canciones detectadas"}
+                    {scanResult.uploader ?? scanResult.channel ?? "YouTube"} · {entriesCount}{" "}
+                    {entriesCount === 1 ? "cancion detectada" : "canciones detectadas"}
                   </div>
                 </div>
               </div>
 
               <div style={{ fontWeight: 600, fontSize: "var(--text-xs)", textTransform: "uppercase", color: "var(--text-faint)" }}>
-                Pistas detectadas ({entriesCount})
+                Pistas detectadas
               </div>
 
               <div
@@ -237,9 +240,9 @@ export function AddPlaylistModal({ isOpen, onClose, onAdded }: Props) {
                   borderRadius: "var(--radius-sm)",
                 }}
               >
-                {(scanResult.entries || (scanResult.id ? [scanResult] : [])).map((t: any, idx: number) => (
+                {scanResult.entries.map((entry, index) => (
                   <div
-                    key={idx}
+                    key={`${entry.id ?? index}-${index}`}
                     style={{
                       display: "flex",
                       alignItems: "center",
@@ -251,14 +254,14 @@ export function AddPlaylistModal({ isOpen, onClose, onAdded }: Props) {
                   >
                     <div style={{ minWidth: 0, paddingRight: "var(--space-2)" }}>
                       <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontWeight: 600 }}>
-                        {t.title}
+                        {entry.title ?? "Sin titulo"}
                       </div>
                       <div className="muted" style={{ fontSize: "var(--text-xs)" }}>
-                        {t.uploader || scanResult.uploader}
+                        {entry.uploader ?? scanResult.uploader ?? ""}
                       </div>
                     </div>
                     <span className="muted" style={{ fontSize: "var(--text-xs)", fontFamily: "var(--font-mono)" }}>
-                      {t.duration ? formatDur(t.duration) : "–:–"}
+                      {entry.duration ? formatDur(entry.duration) : "–:–"}
                     </span>
                   </div>
                 ))}
@@ -274,12 +277,12 @@ export function AddPlaylistModal({ isOpen, onClose, onAdded }: Props) {
           {scanResult && (
             <>
               <button className="btn btn-ghost" onClick={() => handleSave(false)}>
-                <IconCheck size={18} stroke={2} />
-                <span>{entriesCount === 1 ? "Añadir a Biblioteca" : "Importar lista"}</span>
+                <Icon icon="solar:check-circle-bold" size={18} />
+                <span>{entriesCount === 1 ? "Añadir a la biblioteca" : "Importar lista"}</span>
               </button>
               <button className="btn" onClick={() => handleSave(true)}>
-                <IconDownload size={18} stroke={2} />
-                <span>{entriesCount === 1 ? "Bajar canción" : "Importar y Bajar"}</span>
+                <Icon icon="solar:download-square-bold" size={18} />
+                <span>{entriesCount === 1 ? "Bajar cancion" : "Importar y bajar"}</span>
               </button>
             </>
           )}

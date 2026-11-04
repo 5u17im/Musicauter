@@ -1,19 +1,5 @@
-import {
-  IconArrowsShuffle,
-  IconCheck,
-  IconDownload,
-  IconHeart,
-  IconMusic,
-  IconPlayerPause,
-  IconPlayerPlay,
-  IconPlayerSkipBack,
-  IconPlayerSkipForward,
-  IconRepeat,
-  IconRepeatOnce,
-  IconVolume,
-  IconVolumeOff,
-} from "@tabler/icons-react";
-import { formatDur } from "../components/TrackList";
+import { Icon } from "../components/ui/Icon";
+import { formatBytes, formatDur } from "../components/TrackList";
 import { usePlayer } from "../context/PlayerContext";
 import { DownloadManager } from "../services/downloadManager";
 import { StorageService } from "../services/storage";
@@ -25,7 +11,7 @@ export function NowPlayingView() {
   if (!current) {
     return (
       <section className="empty-state" style={{ height: "100%", justifyContent: "center" }}>
-        <IconMusic className="empty-icon" size={64} stroke={1.5} />
+        <Icon icon="solar:music-note-bold" className="empty-icon" size={64} />
         <h2 style={{ fontSize: "var(--text-xl)", fontWeight: 700 }}>Nada en reproducción</h2>
         <p className="muted">Selecciona una pista de tu biblioteca o playlists para reproducirla.</p>
       </section>
@@ -107,7 +93,7 @@ export function NowPlayingView() {
             />
           ) : (
             <div style={{ width: "100%", height: "100%", display: "grid", placeItems: "center" }}>
-              <IconMusic size={80} stroke={1.5} color="white" />
+              <Icon icon="solar:music-note-bold" size={80} color="white" />
             </div>
           )}
 
@@ -175,16 +161,18 @@ export function NowPlayingView() {
         <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
           {current.downloaded ? (
             <span className="badge badge-success">
-              <IconCheck size={14} stroke={2} />
+              <Icon icon="solar:check-circle-bold" size={14} />
               <span>Descargado</span>
             </span>
           ) : (
             <span className="badge badge-accent">Audio en Red</span>
           )}
-          {current.fileSize && <span className="badge">{current.fileSize}</span>}
+          {current.fileSizeBytes ? (
+            <span className="badge">{formatBytes(current.fileSizeBytes)}</span>
+          ) : null}
           {current.isFavorite && (
             <span className="badge badge-danger">
-              <IconHeart size={14} stroke={2} fill="currentColor" />
+              <Icon icon="solar:heart-bold" size={14} />
               <span>Favorito</span>
             </span>
           )}
@@ -218,11 +206,11 @@ export function NowPlayingView() {
             onClick={toggleShuffle}
             aria-label="Modo aleatorio"
           >
-            <IconArrowsShuffle size={22} stroke={1.75} />
+            <Icon icon="solar:shuffle-bold" size={22} />
           </button>
 
           <button className="t-btn" onClick={handlePrev} aria-label="Pista anterior">
-            <IconPlayerSkipBack size={24} stroke={1.75} />
+            <Icon icon="solar:skip-previous-bold" size={24} />
           </button>
 
           <button
@@ -232,14 +220,14 @@ export function NowPlayingView() {
             style={{ width: "56px", height: "56px", minWidth: "56px", minHeight: "56px" }}
           >
             {state.status === "playing" ? (
-              <IconPlayerPause size={28} stroke={2} />
+              <Icon icon="solar:pause-bold" size={28} />
             ) : (
-              <IconPlayerPlay size={28} stroke={2} />
+              <Icon icon="solar:play-bold" size={28} />
             )}
           </button>
 
           <button className="t-btn" onClick={handleNext} aria-label="Siguiente pista">
-            <IconPlayerSkipForward size={24} stroke={1.75} />
+            <Icon icon="solar:skip-next-bold" size={24} />
           </button>
 
           <button
@@ -249,9 +237,9 @@ export function NowPlayingView() {
             aria-label="Modo repetición"
           >
             {state.repeat === "one" ? (
-              <IconRepeatOnce size={22} stroke={1.75} />
+              <Icon icon="solar:repeat-one-bold" size={22} />
             ) : (
-              <IconRepeat size={22} stroke={1.75} />
+              <Icon icon="solar:repeat-bold" size={22} />
             )}
           </button>
         </div>
@@ -271,7 +259,7 @@ export function NowPlayingView() {
               className={`btn btn-ghost btn-sm ${current.isFavorite ? "fav-active" : ""}`}
               onClick={handleToggleFav}
             >
-              <IconHeart size={16} stroke={1.75} fill={current.isFavorite ? "currentColor" : "none"} />
+              <Icon icon={current.isFavorite ? "solar:heart-bold" : "solar:heart-linear"} size={16} />
               <span>{current.isFavorite ? "En favoritos" : "Guardar en favoritos"}</span>
             </button>
 
@@ -282,12 +270,12 @@ export function NowPlayingView() {
             >
               {current.downloaded ? (
                 <>
-                  <IconCheck size={16} stroke={2} color="var(--success)" />
+                  <Icon icon="solar:check-circle-bold" size={16} color="var(--success)" />
                   <span>En disco local</span>
                 </>
               ) : (
                 <>
-                  <IconDownload size={16} stroke={1.75} />
+                  <Icon icon="solar:download-square-bold" size={16} />
                   <span>Descargar pista</span>
                 </>
               )}
@@ -296,7 +284,7 @@ export function NowPlayingView() {
 
           <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
             <button className="t-btn" onClick={toggleMute} aria-label="Silenciar">
-              {state.muted ? <IconVolumeOff size={18} stroke={1.75} /> : <IconVolume size={18} stroke={1.75} />}
+              {state.muted ? <Icon icon="solar:volume-cross-bold" size={18} /> : <Icon icon="solar:volume-loud-bold" size={18} />}
             </button>
             <input
               className="vol-slider"

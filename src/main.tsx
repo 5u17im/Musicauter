@@ -11,6 +11,7 @@ import "./styles/topbar.css";
 import "./styles/playerbar.css";
 import "./styles/rows.css";
 import "./styles/modals.css";
+import "./styles/animations.css";
 
 const root = document.getElementById("root");
 

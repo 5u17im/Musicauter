@@ -1,9 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import {
-  IconArrowsShuffle,
-  IconHeart,
-  IconPlayerPlay,
-} from "@tabler/icons-react";
+import { useEffect, useState } from "react";
+import { Icon } from "../components/ui/Icon";
 import { TrackList } from "../components/TrackList";
 import { usePlayer } from "../context/PlayerContext";
 import { StorageService } from "../services/storage";
@@ -46,12 +42,12 @@ export function FavoritesView() {
 
         <div style={{ display: "flex", gap: "var(--space-2)" }}>
           <button className="btn btn-ghost btn-sm" onClick={handleShufflePlay} disabled={tracks.length === 0}>
-            <IconArrowsShuffle size={16} stroke={1.75} />
+            <Icon icon="solar:shuffle-bold" size={16} />
             <span>Aleatorio</span>
           </button>
 
           <button className="btn btn-sm" onClick={handlePlayAll} disabled={tracks.length === 0}>
-            <IconPlayerPlay size={16} stroke={2} />
+            <Icon icon="solar:play-bold" size={16} />
             <span>Reproducir todo ({tracks.length})</span>
           </button>
         </div>

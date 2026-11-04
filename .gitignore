@@ -1,35 +1,32 @@
-rustywind root Rust
-__pycache__/
-*.pyc
+# ---------------------------------------------------------------
+# Audionave
+# ---------------------------------------------------------------
 
-# Rust
+# --- Rust / Tauri ---
 src-tauri/target/
-src-tauri/rusty-tools.DS_Store
 target/
-.rs
+src-tauri/gen/schemas/
 
-# Binarios embebidos (se bajan con scripts/fetch-binaries.ps1)
+# Binarios de terceros (~160 MB). Se obtienen con:
+#   pwsh ./scripts/fetch-binaries.ps1
 src-tauri/binaries/
 
-# Tauri / scripts
-scripts/
-src-tauri/gen/
-CSharp/
-.vscode/
-.svelte-tmp/
-.tsbuildinfo
-.btmp.*
+# Ejecutable suelto en la raiz (artefacto de build)
+/Audionave.exe
+/app.exe
 
-# Frontend
+# --- Frontend ---
 node_modules/
-public-/
+dist/
+*.tsbuildinfo
 
-# System
+# --- Sistema ---
 .DS_Store
 Thumbs.db
+*.log
+
+# --- Datos locales ---
 *.sqlite
 *.sqlite3
-
-# Local settings
 local.properties
 appsettings.json

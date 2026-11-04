@@ -1,203 +1,174 @@
-import { useMemo, useState } from "react";
-import {
-  IconCheck,
-  IconClock,
-  IconCompass,
-  IconDownload,
-  IconLoader2,
-  IconMusic,
-  IconPlayerPlay,
-  IconPlus,
-  IconSearch,
-  IconSparkles,
-} from "@tabler/icons-react";
-import { searchYouTube, type YouTubeSearchResult } from "../api";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Icon } from "../components/ui/Icon";
+import { getMix, searchYouTube } from "../api";
 import { formatDur } from "../components/TrackList";
 import { usePlayer } from "../context/PlayerContext";
 import { DownloadManager } from "../services/downloadManager";
 import { StorageService } from "../services/storage";
-import type { Recommendation, Track } from "../types";
+import type { Track, YouTubeSearchResult } from "../types";
 
-const GENRES = ["Todos", "Lo-Fi", "Synthwave", "Indie Rock", "Ambient", "Electrónica"];
+/** Cuantas pistas semilla se usan para pedir mezclas a YouTube. */
+const MAX_SEED_TRACKS = 3;
+/** Cuantas recomendaciones se muestran. */
+const MAX_RECOMMENDATIONS = 12;
 
-const RECOMMENDATIONS: Recommendation[] = [
-  {
-    id: "rec-1",
-    title: "Neon Rain Whispers",
-    artist: "Kessler Trio",
-    source: "local",
-    score: 96,
-    reason: "Misma afinidad armónica y tempo (118 BPM) que tu colección.",
-    artworkUrl: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=400&q=80",
-    genre: "Synthwave",
-    youtubeId: "MwpMEbgC7DA",
-  },
-  {
-    id: "rec-2",
-    title: "Sombra y Luz del Alba",
-    artist: "Amara & The Waves",
-    source: "local",
-    score: 92,
-    reason: "Género acústico y energía melódica similar a ‘Ceniza’.",
-    artworkUrl: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=400&q=80",
-    genre: "Indie Rock",
-    youtubeId: "L_LUpnjgPso",
-  },
-  {
-    id: "rec-3",
-    title: "Marea Baja en Saturno",
-    artist: "Nalini Bloom",
-    source: "local",
-    score: 88,
-    reason: "Tonalidad Re menor coincidente con tus pistas favoritas.",
-    artworkUrl: "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=400&q=80",
-    genre: "Ambient",
-    youtubeId: "kJQP7kiw5Fk",
-  },
-  {
-    id: "rec-4",
-    title: "Ocaso Lofi en Tokio",
-    artist: "Parr & Co.",
-    source: "internet",
-    score: 94,
-    reason: "Tendencia viral en YouTube Music para sesiones de código.",
-    artworkUrl: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=400&q=80",
-    genre: "Lo-Fi",
-    youtubeId: "5qap5aO4i9A",
-  },
-  {
-    id: "rec-5",
-    title: "Cybernetic Horizon",
-    artist: "Mildé System",
-    source: "internet",
-    score: 87,
-    reason: "Bajo arpegiado y percusión sintética recomendada.",
-    artworkUrl: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=400&q=80",
-    genre: "Electrónica",
-    youtubeId: "RgKAFK5djSk",
-  },
-  {
-    id: "rec-6",
-    title: "Horizonte Carmesí (Live Acoustic)",
-    artist: "Veltre Project",
-    source: "local",
-    score: 85,
-    reason: "Versión alternativa recomendada del mismo artista.",
-    artworkUrl: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&q=80",
-    genre: "Indie Rock",
-    youtubeId: "fJ9rUzIMcZQ",
-  },
-];
+interface Recommendation extends YouTubeSearchResult {
+  /** Titulo de la pista propia que origino la recomendacion. */
+  basedOn: string;
+}
 
-function recToTrack(rec: Recommendation): Track {
+function ytToTrack(item: YouTubeSearchResult): Track {
   return {
-    id: `rec-${rec.id}`,
-    title: rec.title,
-    artist: rec.artist,
-    album: "Recomendación",
-    durationSeconds: 220,
+    id: `yt-${item.id}`,
+    title: item.title,
+    artist: item.uploader ?? "Artista desconocido",
+    album: "YouTube",
+    durationSeconds: item.duration ?? 0,
     downloaded: false,
-    artworkUrl: rec.artworkUrl,
-    youtubeId: rec.youtubeId,
+    artworkUrl: item.thumbnail,
+    youtubeId: item.id,
     addedAt: Date.now(),
   };
 }
 
-function ytToTrack(yt: YouTubeSearchResult): Track {
-  return {
-    id: `yt-${yt.id}-${Date.now()}`,
-    title: yt.title,
-    artist: yt.uploader || "Artista de YouTube",
-    album: "YouTube",
-    durationSeconds: yt.duration || 0,
-    downloaded: false,
-    artworkUrl: yt.thumbnail,
-    youtubeId: yt.id,
-    addedAt: Date.now(),
-  };
+function shuffle<T>(items: T[]): T[] {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
 }
 
 export function DiscoverView() {
   const { dispatch } = usePlayer();
-  const [selectedGenre, setSelectedGenre] = useState("Todos");
-  const [addedTracks, setAddedTracks] = useState<Set<string>>(new Set());
 
-  // Búsqueda en YouTube
-  const [ytQuery, setYtQuery] = useState("");
-  const [ytResults, setYtResults] = useState<YouTubeSearchResult[]>([]);
+  // --- Busqueda en YouTube ---
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<YouTubeSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
-  const handleYtSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!ytQuery.trim()) return;
+  // --- Recomendaciones reales (mezclas de YouTube) ---
+  const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
+  const [isLoadingRecs, setIsLoadingRecs] = useState(false);
+  const [recsError, setRecsError] = useState<string | null>(null);
+  const [recsGenerated, setRecsGenerated] = useState(false);
+  const [saved, setSaved] = useState<Set<string>>(new Set());
+
+  const libraryIds = useMemo(
+    () => new Set(StorageService.getTracks().map((t) => t.youtubeId).filter(Boolean)),
+    [saved],
+  );
+
+  /**
+   * Las recomendaciones salen de la mezcla automatica de YouTube ("mix") de
+   * tus propias pistas favoritas o recientes. No hay ninguna lista fija.
+   */
+  const loadRecommendations = useCallback(async () => {
+    const library = StorageService.getTracks();
+    const seeds = library
+      .filter((track) => Boolean(track.youtubeId))
+      .sort((a, b) => {
+        if (a.isFavorite !== b.isFavorite) return a.isFavorite ? -1 : 1;
+        return (b.addedAt ?? 0) - (a.addedAt ?? 0);
+      })
+      .slice(0, MAX_SEED_TRACKS);
+
+    if (seeds.length === 0) {
+      setRecommendations([]);
+      setRecsGenerated(true);
+      setRecsError(null);
+      return;
+    }
+
+    setIsLoadingRecs(true);
+    setRecsError(null);
+
+    const collected: Recommendation[] = [];
+    const seen = new Set<string>();
+
+    for (const seed of seeds) {
+      try {
+        const mix = await getMix(seed.youtubeId as string);
+        for (const item of mix) {
+          if (seen.has(item.id)) continue;
+          if (libraryIds.has(item.id)) continue;
+          seen.add(item.id);
+          collected.push({ ...item, basedOn: seed.title });
+        }
+      } catch (error) {
+        console.warn("No se pudo obtener la mezcla de YouTube", error);
+      }
+    }
+
+    if (collected.length === 0) {
+      setRecsError(
+        "YouTube no devolvio recomendaciones. Comprueba tu conexion o actualiza yt-dlp desde Ajustes.",
+      );
+    }
+
+    setRecommendations(shuffle(collected).slice(0, MAX_RECOMMENDATIONS));
+    setRecsGenerated(true);
+    setIsLoadingRecs(false);
+  }, [libraryIds]);
+
+  useEffect(() => {
+    if (!recsGenerated) void loadRecommendations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSearch = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!query.trim()) return;
 
     setIsSearching(true);
     setHasSearched(true);
+    setSearchError(null);
     try {
-      const results = await searchYouTube(ytQuery.trim());
-      setYtResults(results);
-    } catch {
-      setYtResults([]);
+      setResults(await searchYouTube(query.trim()));
+    } catch (error) {
+      setResults([]);
+      setSearchError(
+        error instanceof Error ? error.message : "La busqueda fallo",
+      );
     } finally {
       setIsSearching(false);
     }
   };
 
-  const filteredRecs = useMemo(() => {
-    if (selectedGenre === "Todos") return RECOMMENDATIONS;
-    return RECOMMENDATIONS.filter((r) => r.genre === selectedGenre);
-  }, [selectedGenre]);
-
-  const handlePlayRec = (rec: Recommendation) => {
-    const trk = recToTrack(rec);
-    dispatch({ type: "SET_QUEUE", tracks: [trk], startIndex: 0 });
+  const markSaved = (id: string) => {
+    setSaved((previous) => new Set(previous).add(id));
   };
 
-  const handleAddToLibrary = (rec: Recommendation) => {
-    const trk = recToTrack(rec);
-    StorageService.addTrack(trk);
-    setAddedTracks((prev) => new Set(prev).add(rec.id));
+  const playItem = (item: YouTubeSearchResult) => {
+    dispatch({ type: "SET_QUEUE", tracks: [ytToTrack(item)], startIndex: 0 });
   };
 
-  const handleDownloadRec = (rec: Recommendation) => {
-    const trk = recToTrack(rec);
-    StorageService.addTrack(trk);
-    DownloadManager.enqueueTrack(trk);
-    setAddedTracks((prev) => new Set(prev).add(rec.id));
+  const saveItem = (item: YouTubeSearchResult) => {
+    StorageService.addTracks([ytToTrack(item)]);
+    markSaved(item.id);
   };
 
-  const handlePlayYt = (item: YouTubeSearchResult) => {
-    const trk = ytToTrack(item);
-    dispatch({ type: "SET_QUEUE", tracks: [trk], startIndex: 0 });
-  };
-
-  const handleDownloadYt = (item: YouTubeSearchResult) => {
-    const trk = ytToTrack(item);
-    StorageService.addTrack(trk);
-    DownloadManager.enqueueTrack(trk);
-    setAddedTracks((prev) => new Set(prev).add(item.id));
+  const downloadItem = (item: YouTubeSearchResult) => {
+    const track = ytToTrack(item);
+    StorageService.addTracks([track]);
+    DownloadManager.enqueueTrack(track);
+    markSaved(item.id);
   };
 
   return (
     <section>
       <div className="section-head">
         <div>
-          <div className="section-kicker">Explorador y Recomendaciones</div>
-          <h1 className="section-title">Descubrir y Buscar en YouTube</h1>
-        </div>
-
-        <div style={{ display: "flex", gap: "var(--space-2)" }}>
-          <span className="badge badge-accent">
-            <IconSparkles size={14} stroke={2} />
-            <span>Motor de afinidad activo</span>
-          </span>
+          <div className="section-kicker">Explorador</div>
+          <h1 className="section-title">Descubrir y buscar en YouTube</h1>
         </div>
       </div>
 
-      {/* Buscador Integrado de YouTube */}
       <form
-        onSubmit={handleYtSearch}
+        onSubmit={handleSearch}
         style={{
           display: "flex",
           gap: "var(--space-2)",
@@ -206,283 +177,217 @@ export function DiscoverView() {
         }}
       >
         <div style={{ position: "relative", flex: 1 }}>
-          <IconSearch
+          <Icon
+            icon="solar:magnifier-linear"
             size={18}
-            stroke={1.75}
             style={{ position: "absolute", left: "12px", top: "13px", color: "var(--text-faint)" }}
           />
           <input
             className="field"
             type="search"
-            placeholder="Buscar cualquier canción, artista o álbum en YouTube..."
-            value={ytQuery}
-            onChange={(e) => setYtQuery(e.target.value)}
+            placeholder="Buscar cualquier cancion, artista o album en YouTube..."
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
             style={{ paddingLeft: "2.4rem" }}
             aria-label="Buscar en YouTube"
           />
         </div>
         <button className="btn" type="submit" disabled={isSearching}>
           {isSearching ? (
-            <IconLoader2 size={18} stroke={2} className="anim-pulse" />
+            <Icon icon="solar:restart-bold" size={18} className="anim-pulse" />
           ) : (
-            <IconSearch size={18} stroke={2} />
+            <Icon icon="solar:magnifier-linear" size={18} />
           )}
           <span>{isSearching ? "Buscando..." : "Buscar"}</span>
         </button>
       </form>
 
-      {/* Resultados de Búsqueda de YouTube */}
+      {searchError && (
+        <div className="glass-card" style={{ padding: "var(--space-3)", marginBottom: "var(--space-5)", color: "var(--danger)" }}>
+          <Icon icon="solar:danger-circle-bold" size={16} /> {searchError}
+        </div>
+      )}
+
       {hasSearched && (
         <div style={{ marginBottom: "var(--space-7)" }}>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginBottom: "var(--space-4)",
-            }}
-          >
+          <div className="section-head" style={{ marginBottom: "var(--space-4)" }}>
             <h2 style={{ fontSize: "var(--text-lg)", fontWeight: 750 }}>
-              Resultados en YouTube para "{ytQuery}" ({ytResults.length})
+              Resultados para &quot;{query}&quot; ({results.length})
             </h2>
-            {ytResults.length > 0 && (
+            {results.length > 0 && (
               <button
                 className="btn btn-ghost btn-sm"
                 onClick={() => {
-                  setYtResults([]);
+                  setResults([]);
                   setHasSearched(false);
-                  setYtQuery("");
+                  setQuery("");
                 }}
               >
-                Limpiar resultados
+                Limpiar
               </button>
             )}
           </div>
 
-          {ytResults.length === 0 && !isSearching ? (
+          {results.length === 0 && !isSearching ? (
             <div className="empty-state" style={{ padding: "var(--space-5) 0" }}>
-              <IconMusic className="empty-icon" stroke={1.5} />
-              <div style={{ fontWeight: 650 }}>No se encontraron resultados en YouTube</div>
+              <Icon icon="solar:music-note-bold" size={44} className="empty-icon" />
+              <div style={{ fontWeight: 650 }}>Sin resultados</div>
               <p className="muted" style={{ fontSize: "var(--text-xs)" }}>
-                Prueba con el nombre del artista, título exacto o pega el enlace directo.
+                Prueba con el nombre del artista, el titulo exacto o pega el enlace directo.
               </p>
             </div>
           ) : (
             <div className="grid grid-cards">
-              {ytResults.map((item) => {
-                const isAdded = addedTracks.has(item.id);
-                return (
-                  <div
-                    key={item.id}
-                    className="glass-card"
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "var(--space-3)",
-                      padding: "var(--space-4)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: "100%",
-                        height: "8.5rem",
-                        borderRadius: "var(--radius-sm)",
-                        backgroundSize: "cover",
-                        backgroundPosition: "center",
-                        backgroundImage: item.thumbnail ? `url(${item.thumbnail})` : undefined,
-                        background: !item.thumbnail ? "var(--surface-solid)" : undefined,
-                        display: "grid",
-                        placeItems: "center",
-                        position: "relative",
-                        overflow: "hidden",
-                      }}
-                    >
-                      <button
-                        className="btn-icon"
-                        onClick={() => handlePlayYt(item)}
-                        aria-label={`Reproducir ${item.title}`}
-                        style={{
-                          background: "var(--accent)",
-                          color: "var(--text-inverse)",
-                          boxShadow: "var(--shadow)",
-                        }}
-                      >
-                        <IconPlayerPlay size={20} stroke={2} />
-                      </button>
-                    </div>
-
-                    <div>
-                      <div style={{ fontWeight: 700, fontSize: "var(--text-sm)", color: "var(--text)" }}>
-                        {item.title}
-                      </div>
-                      <div className="muted" style={{ fontSize: "var(--text-xs)", marginTop: "2px" }}>
-                        {item.uploader}
-                      </div>
-                    </div>
-
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        marginTop: "auto",
-                        paddingTop: "var(--space-3)",
-                        borderTop: "1px solid var(--line)",
-                      }}
-                    >
-                      <span className="muted" style={{ fontSize: "var(--text-xs)", fontFamily: "var(--font-mono)" }}>
-                        {item.duration ? formatDur(item.duration) : "–:–"}
-                      </span>
-
-                      <div style={{ display: "flex", gap: "var(--space-1)" }}>
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          onClick={() => {
-                            const trk = ytToTrack(item);
-                            StorageService.addTrack(trk);
-                            setAddedTracks((prev) => new Set(prev).add(item.id));
-                          }}
-                          disabled={isAdded}
-                          title="Añadir a la biblioteca"
-                        >
-                          {isAdded ? (
-                            <IconCheck size={14} stroke={2} color="var(--success)" />
-                          ) : (
-                            <IconPlus size={14} stroke={2} />
-                          )}
-                          <span>{isAdded ? "Guardada" : "Guardar"}</span>
-                        </button>
-
-                        <button
-                          className="btn btn-sm"
-                          onClick={() => handleDownloadYt(item)}
-                          title="Descargar audio"
-                        >
-                          <IconDownload size={14} stroke={2} />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+              {results.map((item) => (
+                <ResultCard
+                  key={item.id}
+                  item={item}
+                  isSaved={saved.has(item.id)}
+                  onPlay={() => playItem(item)}
+                  onSave={() => saveItem(item)}
+                  onDownload={() => downloadItem(item)}
+                />
+              ))}
             </div>
           )}
         </div>
       )}
 
-      {/* Sección de Recomendaciones por Género */}
-      <h2 style={{ fontSize: "var(--text-lg)", fontWeight: 750, marginBottom: "var(--space-3)" }}>
-        Recomendaciones para ti
-      </h2>
-
-      <div style={{ display: "flex", gap: "var(--space-2)", marginBottom: "var(--space-5)", flexWrap: "wrap" }}>
-        {GENRES.map((g) => (
-          <button
-            key={g}
-            className={`btn btn-ghost btn-sm ${selectedGenre === g ? "badge-accent" : ""}`}
-            onClick={() => setSelectedGenre(g)}
-          >
-            {g}
-          </button>
-        ))}
+      {/* Recomendaciones reales */}
+      <div className="section-head" style={{ marginBottom: "var(--space-4)" }}>
+        <div>
+          <h2 style={{ fontSize: "var(--text-lg)", fontWeight: 750 }}>
+            <Icon icon="solar:stars-minimalistic-bold" size={18} style={{ verticalAlign: "-3px", marginRight: "6px" }} />
+            Basado en tu musica
+          </h2>
+          <p className="muted" style={{ fontSize: "var(--text-xs)", marginTop: "4px" }}>
+            Mezclas automaticas de YouTube a partir de tus pistas favoritas. Necesita conexion a internet.
+          </p>
+        </div>
+        <button
+          className="btn btn-ghost btn-sm"
+          onClick={() => void loadRecommendations()}
+          disabled={isLoadingRecs}
+        >
+          <Icon icon="solar:refresh-circle-bold" size={16} className={isLoadingRecs ? "anim-pulse" : ""} />
+          <span>Regenerar</span>
+        </button>
       </div>
 
-      <div className="grid grid-cards">
-        {filteredRecs.map((rec) => {
-          const isAdded = addedTracks.has(rec.id);
-          return (
-            <div
-              key={rec.id}
-              className="glass-card"
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: "var(--space-3)",
-                padding: "var(--space-4)",
-              }}
-            >
-              <div
-                style={{
-                  width: "100%",
-                  height: "8.5rem",
-                  borderRadius: "var(--radius-sm)",
-                  backgroundSize: "cover",
-                  backgroundPosition: "center",
-                  backgroundImage: rec.artworkUrl ? `url(${rec.artworkUrl})` : undefined,
-                  display: "grid",
-                  placeItems: "center",
-                  position: "relative",
-                  overflow: "hidden",
-                }}
-              >
-                <button
-                  className="btn-icon"
-                  onClick={() => handlePlayRec(rec)}
-                  aria-label={`Reproducir ${rec.title}`}
-                  style={{
-                    background: "var(--accent)",
-                    color: "var(--text-inverse)",
-                    boxShadow: "var(--shadow)",
-                  }}
-                >
-                  <IconPlayerPlay size={20} stroke={2} />
-                </button>
-              </div>
-
-              <div>
-                <div style={{ fontWeight: 700, fontSize: "var(--text-base)", color: "var(--text)" }}>
-                  {rec.title}
-                </div>
-                <div className="muted" style={{ fontSize: "var(--text-xs)", marginTop: "2px" }}>
-                  {rec.artist} · <span style={{ color: "var(--accent)" }}>{rec.genre}</span>
-                </div>
-                <div className="muted" style={{ fontSize: "var(--text-xs)", marginTop: "var(--space-2)", lineHeight: 1.4 }}>
-                  {rec.reason}
-                </div>
-              </div>
-
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  marginTop: "auto",
-                  paddingTop: "var(--space-3)",
-                  borderTop: "1px solid var(--line)",
-                }}
-              >
-                <span className="badge" title="Puntuación de afinidad">
-                  {rec.score}% afinidad
-                </span>
-
-                <div style={{ display: "flex", gap: "var(--space-1)" }}>
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => handleAddToLibrary(rec)}
-                    disabled={isAdded}
-                    title="Añadir a la biblioteca"
-                  >
-                    {isAdded ? (
-                      <IconCheck size={14} stroke={2} color="var(--success)" />
-                    ) : (
-                      <IconPlus size={14} stroke={2} />
-                    )}
-                    <span>{isAdded ? "Guardada" : "Biblioteca"}</span>
-                  </button>
-
-                  <button
-                    className="btn btn-sm"
-                    onClick={() => handleDownloadRec(rec)}
-                    title="Descargar canción"
-                  >
-                    <IconDownload size={14} stroke={2} />
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      {isLoadingRecs ? (
+        <div className="empty-state" style={{ padding: "var(--space-6) 0" }}>
+          <Icon icon="solar:restart-bold" size={32} className="anim-spin empty-icon" />
+          <div style={{ fontWeight: 650 }}>Consultando a YouTube...</div>
+        </div>
+      ) : recommendations.length === 0 ? (
+        <div className="empty-state">
+          <Icon icon="solar:compass-bold" size={44} className="empty-icon" />
+          <div style={{ fontWeight: 700, fontSize: "var(--text-lg)" }}>
+            Todavia no hay recomendaciones
+          </div>
+          <p className="muted" style={{ maxWidth: "30rem", fontSize: "var(--text-sm)" }}>
+            {recsError ??
+              "Añade canciones de YouTube o importa una playlist. A partir de ellas se generaran las mezclas."}
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cards">
+          {recommendations.map((item) => (
+            <ResultCard
+              key={item.id}
+              item={item}
+              isSaved={saved.has(item.id)}
+              footnote={`Basado en ${item.basedOn}`}
+              onPlay={() => playItem(item)}
+              onSave={() => saveItem(item)}
+              onDownload={() => downloadItem(item)}
+            />
+          ))}
+        </div>
+      )}
     </section>
+  );
+}
+
+function ResultCard({
+  item,
+  isSaved,
+  footnote,
+  onPlay,
+  onSave,
+  onDownload,
+}: {
+  item: YouTubeSearchResult;
+  isSaved: boolean;
+  footnote?: string;
+  onPlay: () => void;
+  onSave: () => void;
+  onDownload: () => void;
+}) {
+  return (
+    <div className="glass-card result-card" style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)", padding: "var(--space-4)" }}>
+      <div
+        style={{
+          width: "100%",
+          height: "8.5rem",
+          borderRadius: "var(--radius-sm)",
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          backgroundImage: item.thumbnail ? `url(${item.thumbnail})` : undefined,
+          background: item.thumbnail ? undefined : "var(--surface-solid)",
+          display: "grid",
+          placeItems: "center",
+          overflow: "hidden",
+        }}
+      >
+        <button
+          className="btn-icon"
+          onClick={onPlay}
+          aria-label={`Reproducir ${item.title}`}
+          style={{ background: "var(--accent)", color: "var(--text-inverse)", boxShadow: "var(--shadow)" }}
+        >
+          <Icon icon="solar:play-bold" size={20} />
+        </button>
+      </div>
+
+      <div>
+        <div style={{ fontWeight: 700, fontSize: "var(--text-sm)", color: "var(--text)" }}>
+          {item.title}
+        </div>
+        <div className="muted" style={{ fontSize: "var(--text-xs)", marginTop: "2px" }}>
+          {item.uploader}
+        </div>
+        {footnote && (
+          <div className="muted" style={{ fontSize: "var(--text-xs)", marginTop: "4px", fontStyle: "italic" }}>
+            {footnote}
+          </div>
+        )}
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginTop: "auto",
+          paddingTop: "var(--space-3)",
+          borderTop: "1px solid var(--line)",
+        }}
+      >
+        <span className="muted" style={{ fontSize: "var(--text-xs)", fontFamily: "var(--font-mono)" }}>
+          {item.duration ? formatDur(item.duration) : "–:–"}
+        </span>
+
+        <div style={{ display: "flex", gap: "var(--space-1)" }}>
+          <button className="btn btn-ghost btn-sm" onClick={onSave} disabled={isSaved} title="Guardar en la biblioteca">
+            {isSaved ? <Icon icon="solar:check-circle-bold" size={14} color="var(--success)" /> : <Icon icon="solar:add-circle-bold" size={14} />}
+            <span>{isSaved ? "Guardada" : "Guardar"}</span>
+          </button>
+          <button className="btn btn-sm" onClick={onDownload} title="Descargar audio">
+            <Icon icon="solar:download-square-bold" size={14} />
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

@@ -1,11 +1,5 @@
 import { useEffect } from "react";
-import {
-  IconAlertCircle,
-  IconCheck,
-  IconDownload,
-  IconInfoCircle,
-  IconX,
-} from "@tabler/icons-react";
+import { Icon } from "./ui/Icon";
 import type { ToastNotification } from "../types";
 
 interface Props {
@@ -40,13 +34,13 @@ function ToastItem({
   const getIcon = () => {
     switch (toast.type) {
       case "success":
-        return <IconCheck size={18} stroke={2} color="var(--success)" />;
+        return <Icon icon="solar:check-circle-bold" size={18} color="var(--success)" />;
       case "error":
-        return <IconAlertCircle size={18} stroke={2} color="var(--danger)" />;
+        return <Icon icon="solar:danger-circle-bold" size={18} color="var(--danger)" />;
       case "download":
-        return <IconDownload size={18} stroke={2} color="var(--accent)" />;
+        return <Icon icon="solar:download-square-bold" size={18} color="var(--accent)" />;
       default:
-        return <IconInfoCircle size={18} stroke={2} color="var(--accent)" />;
+        return <Icon icon="solar:info-circle-bold" size={18} color="var(--accent)" />;
     }
   };
 
@@ -67,7 +61,7 @@ function ToastItem({
         aria-label="Cerrar notificación"
         style={{ width: "24px", height: "24px", minWidth: "24px", minHeight: "24px" }}
       >
-        <IconX size={14} stroke={1.75} />
+        <Icon icon="solar:close-linear" size={14} />
       </button>
     </div>
   );

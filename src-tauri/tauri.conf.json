@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Audionave",
   "version": "0.1.0",
-"identifier": "com.audionave.desktop",
+  "identifier": "com.audionave.desktop",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -12,13 +12,15 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Audionave",
         "width": 1180,
         "height": 780,
-        "minWidth": 860,
-        "minHeight": 600,
+        "minWidth": 880,
+        "minHeight": 620,
         "center": true,
         "resizable": true,
+        "visible": true,
         "backgroundColor": "#101318"
       }
     ],
@@ -26,12 +28,15 @@
       "csp": null
     }
   },
-"bundle": {
+  "bundle": {
     "active": true,
     "targets": ["nsis", "msi"],
+    "publisher": "Audionave",
+    "copyright": "Copyright (c) 2026 Audionave",
     "category": "Music",
-    "shortDescription": "Reproductor y descargador de musica con recomendaciones",
-    "longDescription": "Descarga playlists de YouTube, reproduce tu musica y descubre canciones similares.",
+    "shortDescription": "Reproductor, descargador y organizador de musica",
+    "longDescription": "Audionave descarga playlists de YouTube a tu disco, reproduce tu biblioteca local y organiza artista, album y caratulas automaticamente. Funciona sin conexion una vez descargada la musica.",
+    "createUpdaterArtifacts": false,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -42,6 +47,15 @@
     "resources": {
       "binaries/yt-dlp.exe": "binaries/yt-dlp.exe",
       "binaries/ffmpeg.exe": "binaries/ffmpeg.exe"
+    },
+    "windows": {
+      "allowDowngrades": false,
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["Spanish", "English"],
+        "displayLanguageSelector": true,
+        "compression": "lzma"
+      }
     }
   }
 }

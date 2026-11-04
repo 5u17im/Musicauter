@@ -1,15 +1,21 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useReducer,
   useEffect,
   useRef,
   type ReactNode,
 } from "react";
-import { getLocalAudioUrl, getStreamUrl } from "../api";
-import type { RepeatMode, Track } from "../types";
-
-type PlayerStatus = "idle" | "playing" | "paused" | "loading" | "error";
+import { listen, emit, type UnlistenFn } from "@tauri-apps/api/event";
+import { frontendLog, getStreamUrl, mediaUrl } from "../api";
+import type {
+  PlayerBroadcast,
+  PlayerStatus,
+  RepeatMode,
+  Theme,
+  Track,
+} from "../types";
 
 interface PlayerState {
   queue: Track[];
@@ -43,6 +49,7 @@ type Action =
   | { type: "SET_PROGRESS"; progress: number; currentTime: number; duration: number }
   | { type: "SET_STATUS"; status: PlayerStatus }
   | { type: "SET_ERROR"; error: string | null }
+  | { type: "CLEAR_ERROR" }
   | { type: "CLEAR_QUEUE" };
 
 const initialState: PlayerState = {
@@ -60,6 +67,8 @@ const initialState: PlayerState = {
   error: null,
 };
 
+const AUDIO_FILE_RE = /\.(mp3|flac|opus|m4a|wav|ogg|oga|aac|wma|aiff|aif)$/i;
+
 function shuffleArray<T>(array: T[]): T[] {
   const copy = [...array];
   for (let i = copy.length - 1; i > 0; i--) {
@@ -74,6 +83,10 @@ function playerReducer(state: PlayerState, action: Action): PlayerState {
     case "SET_QUEUE": {
       const idx = action.startIndex ?? 0;
       const tracks = action.tracks;
+      if (tracks.length === 0) {
+        return { ...state, queue: [], originalQueue: [], currentIndex: -1, status: "idle" };
+      }
+
       let finalQueue = tracks;
       let targetIdx = idx;
 
@@ -88,19 +101,20 @@ function playerReducer(state: PlayerState, action: Action): PlayerState {
         ...state,
         queue: finalQueue,
         originalQueue: tracks,
-        currentIndex: tracks.length ? targetIdx : -1,
-        status: tracks.length ? "loading" : "idle",
+        currentIndex: targetIdx,
+        status: "loading",
         progress: 0,
         currentTime: 0,
-        duration: tracks[idx]?.durationSeconds || 0,
+        duration: tracks[targetIdx]?.durationSeconds ?? 0,
         error: null,
       };
     }
 
     case "ADD_TO_QUEUE": {
+      const queue = [...state.queue, ...action.tracks];
       return {
         ...state,
-        queue: [...state.queue, ...action.tracks],
+        queue,
         originalQueue: [...state.originalQueue, ...action.tracks],
         currentIndex: state.currentIndex === -1 ? 0 : state.currentIndex,
       };
@@ -114,11 +128,7 @@ function playerReducer(state: PlayerState, action: Action): PlayerState {
       } else if (action.index === state.currentIndex) {
         nextIndex = Math.min(nextIndex, nextQueue.length - 1);
       }
-      return {
-        ...state,
-        queue: nextQueue,
-        currentIndex: nextIndex,
-      };
+      return { ...state, queue: nextQueue, currentIndex: nextIndex };
     }
 
     case "PLAY":
@@ -138,23 +148,11 @@ function playerReducer(state: PlayerState, action: Action): PlayerState {
       const next = state.currentIndex + 1;
       if (next >= state.queue.length) {
         if (state.repeat === "all") {
-          return {
-            ...state,
-            currentIndex: 0,
-            status: "loading",
-            progress: 0,
-            currentTime: 0,
-          };
+          return { ...state, currentIndex: 0, status: "loading", progress: 0, currentTime: 0 };
         }
         return { ...state, status: "paused", progress: 1 };
       }
-      return {
-        ...state,
-        currentIndex: next,
-        status: "loading",
-        progress: 0,
-        currentTime: 0,
-      };
+      return { ...state, currentIndex: next, status: "loading", progress: 0, currentTime: 0 };
     }
 
     case "PREVIOUS": {
@@ -165,13 +163,7 @@ function playerReducer(state: PlayerState, action: Action): PlayerState {
       if (prev < 0) {
         return { ...state, progress: 0, currentTime: 0 };
       }
-      return {
-        ...state,
-        currentIndex: prev,
-        status: "loading",
-        progress: 0,
-        currentTime: 0,
-      };
+      return { ...state, currentIndex: prev, status: "loading", progress: 0, currentTime: 0 };
     }
 
     case "SEEK":
@@ -188,23 +180,19 @@ function playerReducer(state: PlayerState, action: Action): PlayerState {
       if (nextShuffle) {
         const current = state.queue[state.currentIndex];
         const rest = state.originalQueue.filter((t) => t.id !== current?.id);
-        const shuffled = current ? [current, ...shuffleArray(rest)] : shuffleArray(state.originalQueue);
-        return {
-          ...state,
-          shuffle: true,
-          queue: shuffled,
-          currentIndex: 0,
-        };
-      } else {
-        const current = state.queue[state.currentIndex];
-        const origIdx = state.originalQueue.findIndex((t) => t.id === current?.id);
-        return {
-          ...state,
-          shuffle: false,
-          queue: state.originalQueue,
-          currentIndex: origIdx !== -1 ? origIdx : 0,
-        };
+        const shuffled = current
+          ? [current, ...shuffleArray(rest)]
+          : shuffleArray(state.originalQueue);
+        return { ...state, shuffle: true, queue: shuffled, currentIndex: 0 };
       }
+      const current = state.queue[state.currentIndex];
+      const origIdx = state.originalQueue.findIndex((t) => t.id === current?.id);
+      return {
+        ...state,
+        shuffle: false,
+        queue: state.originalQueue,
+        currentIndex: origIdx !== -1 ? origIdx : 0,
+      };
     }
 
     case "CYCLE_REPEAT": {
@@ -227,12 +215,71 @@ function playerReducer(state: PlayerState, action: Action): PlayerState {
     case "SET_ERROR":
       return { ...state, error: action.error, status: "error" };
 
+    case "CLEAR_ERROR":
+      return {
+        ...state,
+        error: null,
+        // Solo se toca el estado si lo puso el propio error.
+        status:
+          state.status === "error"
+            ? state.queue.length > 0
+              ? "paused"
+              : "idle"
+            : state.status,
+      };
+
     case "CLEAR_QUEUE":
       return { ...initialState };
 
     default:
       return state;
   }
+}
+
+/**
+ * Deja el elemento <audio> sin fuente.
+ *
+ * NUNCA asignar `src = ""`: el navegador resuelve la cadena vacia contra la URL
+ * del documento, intenta cargar la propia pagina como si fuera audio y dispara
+ * un evento `error`. Eso hacia aparecer "No se pudo reproducir este audio" al
+ * abrir la aplicacion, sin haber elegido ninguna cancion.
+ *
+ * Quitar el atributo y llamar a load() deja el elemento en NETWORK_EMPTY, sin
+ * error y sin peticiones de red.
+ */
+function resetAudio(audio: HTMLAudioElement): void {
+  audio.pause();
+  audio.removeAttribute("src");
+  audio.load();
+}
+
+/** Cache de URLs de streaming de YouTube. Caducan, por eso llevan marca de tiempo. */
+const streamUrlCache = new Map<string, { url: string; at: number }>();
+const STREAM_TTL_MS = 30 * 60 * 1000;
+
+async function resolveStreamUrl(youtubeId: string): Promise<string> {
+  const cached = streamUrlCache.get(youtubeId);
+  if (cached && Date.now() - cached.at < STREAM_TTL_MS) {
+    return cached.url;
+  }
+  const url = await getStreamUrl(youtubeId);
+  if (url) streamUrlCache.set(youtubeId, { url, at: Date.now() });
+  return url;
+}
+
+/**
+ * Determina de donde sale el audio:
+ *  1. Archivo en disco -> servidor HTTP local (con Range, sin cargar en memoria).
+ *  2. Video de YouTube -> URL de stream directa.
+ */
+async function resolveTrackSource(track: Track): Promise<string> {
+  if (track.path && AUDIO_FILE_RE.test(track.path)) {
+    return mediaUrl(track.path);
+  }
+  if (track.youtubeId) {
+    return resolveStreamUrl(track.youtubeId);
+  }
+  return "";
 }
 
 const PlayerContext = createContext<{
@@ -250,14 +297,26 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const activeLoadIdRef = useRef<string>("");
   const currentLoadedTrackIdRef = useRef<string>("");
   const userPausedRef = useRef<boolean>(false);
+  const repeatRef = useRef<RepeatMode>("off");
 
-  // Inicializar elemento de audio HTML5
+  repeatRef.current = state.repeat;
+
+  // Instantaneas para los oyentes de eventos, que no deben re-registrarse.
+  const stateRef = useRef(state);
+  useEffect(() => {
+    stateRef.current = state;
+  });
+
+  const togglePlayRef = useRef<() => void>(() => {});
+
+  // Elemento de audio HTML5
   useEffect(() => {
     const audio = new Audio();
+    audio.preload = "auto";
     audioRef.current = audio;
 
     const handleTimeUpdate = () => {
-      if (audio.duration && !isNaN(audio.duration)) {
+      if (audio.duration && !Number.isNaN(audio.duration)) {
         dispatch({
           type: "SET_PROGRESS",
           progress: audio.currentTime / audio.duration,
@@ -268,16 +327,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     };
 
     const handleEnded = () => {
-      if (state.repeat === "one") {
+      if (repeatRef.current === "one") {
         audio.currentTime = 0;
-        audio.play().catch(() => {});
+        void audio.play().catch(() => {});
       } else {
         dispatch({ type: "NEXT" });
       }
     };
 
     const handleLoadedMeta = () => {
-      if (audio.duration && !isNaN(audio.duration)) {
+      if (audio.duration && !Number.isNaN(audio.duration)) {
         dispatch({
           type: "SET_PROGRESS",
           progress: 0,
@@ -287,38 +346,64 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       }
     };
 
+    const handleError = () => {
+      // Sin fuente asignada no hay nada que reproducir: el evento es espurio.
+      // Se registra para poder diagnosticarlo sin depender de la interfaz.
+      const hasSource = Boolean(audio.getAttribute("src"));
+      void frontendLog(`audio: evento error (fuente asignada: ${hasSource})`);
+      if (!hasSource) return;
+      const snapshot = stateRef.current;
+      if (!snapshot.queue[snapshot.currentIndex]) return;
+
+      dispatch({
+        type: "SET_ERROR",
+        error:
+          "No se pudo reproducir este audio. Puede que el archivo ya no exista o no sea valido.",
+      });
+    };
+
     audio.addEventListener("timeupdate", handleTimeUpdate);
     audio.addEventListener("ended", handleEnded);
     audio.addEventListener("loadedmetadata", handleLoadedMeta);
+    audio.addEventListener("error", handleError);
 
     return () => {
       audio.removeEventListener("timeupdate", handleTimeUpdate);
       audio.removeEventListener("ended", handleEnded);
       audio.removeEventListener("loadedmetadata", handleLoadedMeta);
-      audio.pause();
-      audio.src = "";
+      audio.removeEventListener("error", handleError);
+      resetAudio(audio);
     };
-  }, [state.repeat]);
+  }, []);
 
-  // Carga y resolución de la fuente de audio SOLO si cambió la pista actual
+  // Carga de la fuente de audio cuando cambia la pista
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
 
     if (state.queue.length === 0 || state.currentIndex < 0) {
       currentLoadedTrackIdRef.current = "";
-      audio.pause();
-      audio.src = "";
+      resetAudio(audio);
       return;
     }
 
     const currentTrack = state.queue[state.currentIndex];
     if (!currentTrack) return;
 
-    // Si ya estamos reproduciendo esta pista exacta, no recargar el stream
     if (currentLoadedTrackIdRef.current === currentTrack.id && audio.src) {
       return;
     }
+
+    resetAudio(audio);
+    // Al empezar una pista nueva, el error anterior ya no aplica.
+    dispatch({ type: "CLEAR_ERROR" });
+    dispatch({ type: "SET_STATUS", status: "loading" });
+    dispatch({
+      type: "SET_PROGRESS",
+      progress: 0,
+      currentTime: 0,
+      duration: currentTrack.durationSeconds ?? 0,
+    });
 
     currentLoadedTrackIdRef.current = currentTrack.id;
     userPausedRef.current = false;
@@ -326,63 +411,65 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const loadId = `${currentTrack.id}-${Date.now()}`;
     activeLoadIdRef.current = loadId;
 
-    async function loadAudioSource() {
-      let resolvedSrc = "";
-
-      // 1. Si la pista está descargada localmente
-      if (currentTrack.path) {
-        resolvedSrc = await getLocalAudioUrl(currentTrack.path);
-      }
-      // 2. Si es una pista de YouTube (online)
-      else if (currentTrack.youtubeId || (currentTrack.id && currentTrack.id.startsWith("yt-"))) {
-        const ytid = currentTrack.youtubeId || currentTrack.id.replace(/^yt-/, "").split("-")[0];
-        resolvedSrc = await getStreamUrl(ytid);
+    void (async () => {
+      let source = "";
+      try {
+        source = await resolveTrackSource(currentTrack);
+      } catch (error) {
+        console.error("No se pudo resolver el audio", error);
       }
 
-      // Evitar condiciones de carrera si el usuario cambió de pista mientras cargaba
-      if (activeLoadIdRef.current !== loadId || !audio) return;
+      // El usuario pudo cambiar de pista mientras se resolvia la URL.
+      if (activeLoadIdRef.current !== loadId || audioRef.current !== audio) return;
 
-      if (resolvedSrc) {
-        audio.src = resolvedSrc;
-        audio.volume = state.muted ? 0 : state.volume;
+      if (!source) {
+        dispatch({
+          type: "SET_ERROR",
+          error: currentTrack.youtubeId
+            ? "No se pudo obtener el audio de YouTube"
+            : "La pista no tiene archivo ni video asociado",
+        });
+        return;
+      }
 
-        // Si el usuario pausó mientras se obtenía la URL, no forzar play
-        if (!userPausedRef.current) {
-          audio.play()
-            .then(() => {
-              dispatch({ type: "SET_STATUS", status: "playing" });
-            })
-            .catch(() => {
-              dispatch({ type: "SET_STATUS", status: "paused" });
-            });
-        } else {
-          dispatch({ type: "SET_STATUS", status: "paused" });
+      audio.src = source;
+      audio.volume = state.muted ? 0 : state.volume;
+
+      if (userPausedRef.current) {
+        dispatch({ type: "SET_STATUS", status: "paused" });
+        return;
+      }
+
+      try {
+        await audio.play();
+        dispatch({ type: "SET_STATUS", status: "playing" });
+
+        // Precarga en segundo plano de la siguiente pista de la cola.
+        const nextIndex = state.currentIndex + 1;
+        const nextTrack = state.queue[nextIndex];
+        if (nextTrack && !nextTrack.path && nextTrack.youtubeId) {
+          void resolveStreamUrl(nextTrack.youtubeId).catch(() => {});
         }
-      } else {
+      } catch {
         dispatch({ type: "SET_STATUS", status: "paused" });
       }
-    }
-
-    void loadAudioSource();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.currentIndex, state.queue]);
 
-  // Controles directos e inmediatos de reproducción
   const play = () => {
     userPausedRef.current = false;
     dispatch({ type: "PLAY" });
     const audio = audioRef.current;
     if (audio && audio.src) {
-      audio.play().catch(() => {});
+      void audio.play().catch(() => {});
     }
   };
 
   const pause = () => {
     userPausedRef.current = true;
     dispatch({ type: "PAUSE" });
-    const audio = audioRef.current;
-    if (audio) {
-      audio.pause();
-    }
+    audioRef.current?.pause();
   };
 
   const togglePlay = () => {
@@ -393,12 +480,186 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // Sincronizar volumen y silencio
+  // Volumen y silencio
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
     audio.volume = state.muted ? 0 : state.volume;
   }, [state.volume, state.muted]);
+
+  togglePlayRef.current = togglePlay;
+
+  // -------------------------------------------------------------------
+  // Integracion con navigator.mediaSession (teclas multimedia fisicas y
+  // flyout nativo de Windows 11).
+  // -------------------------------------------------------------------
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+
+    const currentTrack = state.queue[state.currentIndex];
+    if (!currentTrack) {
+      navigator.mediaSession.metadata = null;
+      navigator.mediaSession.playbackState = "none";
+      return;
+    }
+
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: currentTrack.title,
+      artist: currentTrack.artist,
+      album: currentTrack.album ?? "Audionave",
+      artwork: currentTrack.artworkUrl
+        ? [{ src: currentTrack.artworkUrl, sizes: "512x512", type: "image/jpeg" }]
+        : [],
+    });
+
+    navigator.mediaSession.playbackState =
+      state.status === "playing" ? "playing" : "paused";
+  }, [state.currentIndex, state.queue, state.status]);
+
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+
+    const safeSetHandler = (
+      action: MediaSessionAction,
+      handler: MediaSessionActionHandler | null,
+    ) => {
+      try {
+        navigator.mediaSession.setActionHandler(action, handler);
+      } catch {
+        // Algunas plataformas no implementan todas las acciones de MediaSession.
+      }
+    };
+
+    safeSetHandler("play", () => {
+      userPausedRef.current = false;
+      dispatch({ type: "PLAY" });
+      void audioRef.current?.play().catch(() => {});
+    });
+    safeSetHandler("pause", () => {
+      userPausedRef.current = true;
+      dispatch({ type: "PAUSE" });
+      audioRef.current?.pause();
+    });
+    safeSetHandler("previoustrack", () => dispatch({ type: "PREVIOUS" }));
+    safeSetHandler("nexttrack", () => dispatch({ type: "NEXT" }));
+    safeSetHandler("seekto", (details) => {
+      const audio = audioRef.current;
+      if (
+        audio &&
+        typeof details.seekTime === "number" &&
+        audio.duration &&
+        Number.isFinite(audio.duration)
+      ) {
+        audio.currentTime = details.seekTime;
+        dispatch({
+          type: "SET_PROGRESS",
+          progress: details.seekTime / audio.duration,
+          currentTime: details.seekTime,
+          duration: audio.duration,
+        });
+      }
+    });
+
+    return () => {
+      safeSetHandler("play", null);
+      safeSetHandler("pause", null);
+      safeSetHandler("previoustrack", null);
+      safeSetHandler("nexttrack", null);
+      safeSetHandler("seekto", null);
+    };
+  }, []);
+
+  // -------------------------------------------------------------------
+  // Puente con la bandeja del sistema, el mini reproductor y la barra de
+  // miniaturas de la barra de tareas.
+  // -------------------------------------------------------------------
+
+  /** Difunde el estado para que el mini reproductor lo refleje. */
+  const broadcast = useCallback(() => {
+    const snapshot = stateRef.current;
+    const track = snapshot.queue[snapshot.currentIndex];
+    const payload: PlayerBroadcast = {
+      status: snapshot.status,
+      theme: (document.documentElement.dataset.theme as Theme) ?? "dark",
+      title: track?.title ?? "",
+      artist: track?.artist ?? "",
+      artworkUrl: track?.artworkUrl ?? null,
+      progress: snapshot.progress,
+      currentTime: snapshot.currentTime,
+      duration: snapshot.duration || track?.durationSeconds || 0,
+      volume: snapshot.volume,
+      muted: snapshot.muted,
+      shuffle: snapshot.shuffle,
+      repeat: snapshot.repeat,
+      hasTrack: Boolean(track),
+    };
+    void emit("player://state", payload);
+  }, []);
+
+  // Cambios discretos: se difunden de inmediato.
+  useEffect(() => {
+    broadcast();
+  }, [
+    state.currentIndex,
+    state.status,
+    state.volume,
+    state.muted,
+    state.shuffle,
+    state.repeat,
+    broadcast,
+  ]);
+
+  // El avance de la pista se difunde a intervalos para no saturar el IPC.
+  useEffect(() => {
+    const timer = window.setInterval(broadcast, 500);
+    return () => window.clearInterval(timer);
+  }, [broadcast]);
+
+  // Comandos entrantes.
+  useEffect(() => {
+    const unlisteners: UnlistenFn[] = [];
+    let cancelled = false;
+
+    const register = (promise: Promise<UnlistenFn>) => {
+      void promise.then((unlisten) => {
+        if (cancelled) unlisten();
+        else unlisteners.push(unlisten);
+      });
+    };
+
+    register(
+      listen("media://toggle-play", () => {
+        // Usa el helper real: cambiar solo el estado del reductor dejaba el
+        // elemento <audio> sonando igual.
+        togglePlayRef.current();
+      }),
+    );
+    register(listen("media://next", () => dispatch({ type: "NEXT" })));
+    register(listen("media://previous", () => dispatch({ type: "PREVIOUS" })));
+    register(listen("media://shuffle", () => dispatch({ type: "TOGGLE_SHUFFLE" })));
+    register(listen("media://repeat", () => dispatch({ type: "CYCLE_REPEAT" })));
+    register(
+      listen<number>("media://seek", (event) => {
+        const ratio = Math.min(1, Math.max(0, Number(event.payload)));
+        const audio = audioRef.current;
+        if (audio && audio.duration && Number.isFinite(audio.duration)) {
+          audio.currentTime = ratio * audio.duration;
+          dispatch({
+            type: "SET_PROGRESS",
+            progress: ratio,
+            currentTime: audio.currentTime,
+            duration: audio.duration,
+          });
+        }
+      }),
+    );
+    register(listen("player://request-state", () => broadcast()));
+
+    return () => {
+      cancelled = true;
+      unlisteners.forEach((unlisten) => unlisten());
+    };
+  }, [broadcast]);
 
   return (
     <PlayerContext.Provider value={{ state, dispatch, audioRef, play, pause, togglePlay }}>

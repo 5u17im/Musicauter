@@ -1,13 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import {
-  IconArrowsShuffle,
-  IconCheck,
-  IconClock,
-  IconDownload,
-  IconFilter,
-  IconMusic,
-  IconPlayerPlay,
-} from "@tabler/icons-react";
+import { Icon } from "../components/ui/Icon";
 import { TrackList } from "../components/TrackList";
 import { usePlayer } from "../context/PlayerContext";
 import { DownloadManager } from "../services/downloadManager";
@@ -93,18 +85,18 @@ export function LibraryView({ searchQuery = "" }: Props) {
         <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center", flexWrap: "wrap" }}>
           {tracks.length - downloadedCount > 0 && (
             <button className="btn btn-ghost btn-sm" onClick={handleDownloadAllPending}>
-              <IconDownload size={16} stroke={1.75} />
+              <Icon icon="solar:download-square-bold" size={16} />
               <span>Bajar pendientes ({tracks.length - downloadedCount})</span>
             </button>
           )}
 
           <button className="btn btn-ghost btn-sm" onClick={handleShuffleAll} disabled={tracks.length === 0}>
-            <IconArrowsShuffle size={16} stroke={1.75} />
+            <Icon icon="solar:shuffle-bold" size={16} />
             <span>Aleatorio</span>
           </button>
 
           <button className="btn btn-sm" onClick={handlePlayAll} disabled={tracks.length === 0}>
-            <IconPlayerPlay size={16} stroke={2} />
+            <Icon icon="solar:play-bold" size={16} />
             <span>Reproducir todo</span>
           </button>
         </div>
@@ -132,24 +124,24 @@ export function LibraryView({ searchQuery = "" }: Props) {
             className={`btn btn-ghost btn-sm ${filter === "downloaded" ? "badge-accent" : ""}`}
             onClick={() => setFilter("downloaded")}
           >
-            <IconCheck size={14} stroke={2} />
+            <Icon icon="solar:check-circle-bold" size={14} />
             <span>Descargadas ({downloadedCount})</span>
           </button>
           <button
             className={`btn btn-ghost btn-sm ${filter === "pending" ? "badge-accent" : ""}`}
             onClick={() => setFilter("pending")}
           >
-            <IconDownload size={14} stroke={1.75} />
+            <Icon icon="solar:download-square-bold" size={14} />
             <span>Por bajar ({tracks.length - downloadedCount})</span>
           </button>
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-          <IconFilter size={16} stroke={1.75} color="var(--text-faint)" />
+          <Icon icon="solar:filter-bold" size={16} color="var(--text-faint)" />
           <select
             className="field"
             value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as any)}
+            onChange={(e) => setSortBy(e.target.value as "added" | "title" | "artist" | "duration")}
             style={{ width: "auto", height: "36px", padding: "0.2rem 0.6rem", fontSize: "var(--text-xs)" }}
             aria-label="Criterio de ordenación"
           >

@@ -1,13 +1,4 @@
-import {
-  IconCheck,
-  IconClock,
-  IconDownload,
-  IconHeart,
-  IconMusic,
-  IconPlayerPause,
-  IconPlayerPlay,
-  IconPlus,
-} from "@tabler/icons-react";
+import { Icon } from "./ui/Icon";
 import { usePlayer } from "../context/PlayerContext";
 import { DownloadManager } from "../services/downloadManager";
 import { StorageService } from "../services/storage";
@@ -34,7 +25,7 @@ export function TrackList({
   if (tracks.length === 0) {
     return (
       <div className="empty-state">
-        <IconMusic className="empty-icon" stroke={1.5} />
+        <Icon icon="solar:music-note-bold" size={44} className="empty-icon" />
         <div style={{ fontWeight: 700, fontSize: "var(--text-lg)" }}>{emptyTitle}</div>
         <p className="muted" style={{ maxWidth: "24rem", fontSize: "var(--text-sm)" }}>
           {emptyMessage}
@@ -81,7 +72,7 @@ export function TrackList({
         <span role="columnheader">Título</span>
         <span role="columnheader" className="track-album">Álbum</span>
         <span role="columnheader" style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-          <IconClock size={14} stroke={1.75} />
+          <Icon icon="solar:clock-circle-bold" size={14} />
           <span>Duración</span>
         </span>
         <span role="columnheader" style={{ textAlign: "right" }}>Acciones</span>
@@ -96,6 +87,7 @@ export function TrackList({
             key={track.id}
             className="track-row"
             data-active={isSelected}
+            style={{ "--row-index": Math.min(idx, 24) } as React.CSSProperties}
             role="row"
             tabIndex={0}
             onKeyDown={(e) => {
@@ -117,9 +109,9 @@ export function TrackList({
             >
               <div className="track-art-play">
                 {isPlayingThis ? (
-                  <IconPlayerPause size={16} stroke={2} fill="white" />
+                  <Icon icon="solar:pause-bold" size={16} color="white" />
                 ) : (
-                  <IconPlayerPlay size={16} stroke={2} fill="white" />
+                  <Icon icon="solar:play-bold" size={16} color="white" />
                 )}
               </div>
               {isPlayingThis && (
@@ -159,7 +151,7 @@ export function TrackList({
                 aria-label={track.isFavorite ? "Quitar de favoritos" : "Marcar como favorito"}
                 title="Favorito"
               >
-                <IconHeart size={16} stroke={1.75} fill={track.isFavorite ? "currentColor" : "none"} />
+                <Icon icon={track.isFavorite ? "solar:heart-bold" : "solar:heart-linear"} size={16} />
               </button>
 
               <button
@@ -170,9 +162,9 @@ export function TrackList({
                 title={track.downloaded ? "Descargada" : "Descargar"}
               >
                 {track.downloaded ? (
-                  <IconCheck size={16} stroke={2} color="var(--success)" />
+                  <Icon icon="solar:check-circle-bold" size={16} color="var(--success)" />
                 ) : (
-                  <IconDownload size={16} stroke={1.75} />
+                  <Icon icon="solar:download-square-bold" size={16} />
                 )}
               </button>
 
@@ -182,7 +174,7 @@ export function TrackList({
                 aria-label="Añadir a la cola de reproducción"
                 title="Añadir a la cola"
               >
-                <IconPlus size={16} stroke={1.75} />
+                <Icon icon="solar:add-circle-bold" size={16} />
               </button>
             </div>
           </div>
@@ -197,4 +189,16 @@ export function formatDur(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+export function formatBytes(bytes?: number): string {
+  if (!bytes || bytes <= 0) return "";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(value >= 100 || unit === 0 ? 0 : 1)} ${units[unit]}`;
 }

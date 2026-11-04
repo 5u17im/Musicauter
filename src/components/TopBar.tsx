@@ -1,4 +1,4 @@
-import { IconDisc, IconPlus, IconSearch, IconX } from "@tabler/icons-react";
+import { Icon } from "./ui/Icon";
 import type { AppView } from "../types";
 
 interface Props {
@@ -13,13 +13,13 @@ export function TopBar({ searchQuery, onSearchChange, onOpenAddModal, onNavigate
     <header className="topbar">
       <button className="brand" onClick={() => onNavigate("library")} aria-label="Ir al inicio">
         <span className="brand-mark" aria-hidden="true">
-          <IconDisc size={22} stroke={2} />
+          <Icon icon="solar:vinyl-bold" size={22} />
         </span>
         <span className="brand-name">Audionave</span>
       </button>
 
       <div className="search" role="search">
-        <IconSearch size={18} stroke={1.75} className="search-icon" aria-hidden="true" />
+        <Icon icon="solar:magnifier-linear" size={18} className="search-icon" aria-hidden="true" />
         <input
           className="field search-field"
           type="search"
@@ -34,7 +34,7 @@ export function TopBar({ searchQuery, onSearchChange, onOpenAddModal, onNavigate
             onClick={() => onSearchChange("")}
             aria-label="Limpiar búsqueda"
           >
-            <IconX size={16} stroke={1.75} />
+            <Icon icon="solar:close-linear" size={16} />
           </button>
         )}
       </div>
@@ -45,7 +45,7 @@ export function TopBar({ searchQuery, onSearchChange, onOpenAddModal, onNavigate
           onClick={onOpenAddModal}
           aria-label="Añadir playlist o canción por URL"
         >
-          <IconPlus size={16} stroke={2} />
+          <Icon icon="solar:add-circle-bold" size={16} />
           <span>Añadir URL</span>
         </button>
       </div>

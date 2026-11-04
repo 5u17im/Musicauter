@@ -1,12 +1,4 @@
-import {
-  IconCompass,
-  IconDownload,
-  IconHeart,
-  IconMusic,
-  IconPlayerPlay,
-  IconPlaylist,
-  IconSettings,
-} from "@tabler/icons-react";
+import { Icon } from "./ui/Icon";
 import type { AppView } from "../types";
 
 interface SideItemProps {
@@ -52,20 +44,20 @@ export function Sidebar({ active, onNavigate, stats }: Props) {
         <span className="side-label">Tu música</span>
         <SideItem
           label="En reproducción"
-          icon={<IconPlayerPlay size={18} stroke={1.75} />}
+          icon={<Icon icon="solar:play-bold" size={18} />}
           active={active === "now-playing"}
           onClick={() => onNavigate("now-playing")}
         />
         <SideItem
           label="Biblioteca"
-          icon={<IconMusic size={18} stroke={1.75} />}
+          icon={<Icon icon="solar:music-note-bold" size={18} />}
           active={active === "library"}
           onClick={() => onNavigate("library")}
           badge={stats?.tracksCount}
         />
         <SideItem
           label="Favoritos"
-          icon={<IconHeart size={18} stroke={1.75} />}
+          icon={<Icon icon="solar:heart-bold" size={18} />}
           active={active === "favorites"}
           onClick={() => onNavigate("favorites")}
           badge={stats?.favoritesCount}
@@ -76,21 +68,21 @@ export function Sidebar({ active, onNavigate, stats }: Props) {
         <span className="side-label">Colección</span>
         <SideItem
           label="Playlists"
-          icon={<IconPlaylist size={18} stroke={1.75} />}
+          icon={<Icon icon="solar:playlist-bold" size={18} />}
           active={active === "playlists"}
           onClick={() => onNavigate("playlists")}
           badge={stats?.playlistsCount}
         />
         <SideItem
           label="Descargas"
-          icon={<IconDownload size={18} stroke={1.75} />}
+          icon={<Icon icon="solar:download-square-bold" size={18} />}
           active={active === "downloads"}
           onClick={() => onNavigate("downloads")}
           badge={stats?.downloadsCount}
         />
         <SideItem
           label="Descubrir"
-          icon={<IconCompass size={18} stroke={1.75} />}
+          icon={<Icon icon="solar:compass-bold" size={18} />}
           active={active === "discover"}
           onClick={() => onNavigate("discover")}
         />
@@ -99,7 +91,7 @@ export function Sidebar({ active, onNavigate, stats }: Props) {
       <div className="side-group" style={{ marginTop: "auto" }}>
         <SideItem
           label="Ajustes"
-          icon={<IconSettings size={18} stroke={1.75} />}
+          icon={<Icon icon="solar:settings-bold" size={18} />}
           active={active === "settings"}
           onClick={() => onNavigate("settings")}
         />

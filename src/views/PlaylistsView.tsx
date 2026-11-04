@@ -1,27 +1,46 @@
 import { useEffect, useState } from "react";
-import {
-  IconCheck,
-  IconDownload,
-  IconMusic,
-  IconPlayerPlay,
-  IconPlaylist,
-  IconPlus,
-  IconRefresh,
-  IconTrash,
-} from "@tabler/icons-react";
+import { Icon } from "../components/ui/Icon";
+import { scanPlaylist, type YtDlpEntry } from "../api";
 import { TrackList } from "../components/TrackList";
 import { usePlayer } from "../context/PlayerContext";
 import { DownloadManager } from "../services/downloadManager";
 import { StorageService } from "../services/storage";
-import type { Playlist } from "../types";
+import type { Playlist, Track } from "../types";
 
 interface Props {
   onOpenAddModal: () => void;
 }
 
+/** Construye una pista a partir de una entrada de yt-dlp (id estable). */
+function entryToTrack(entry: YtDlpEntry, fallbackArtist?: string): Track | null {
+  const youtubeId = typeof entry.id === "string" ? entry.id : "";
+  if (!youtubeId) return null;
+  return {
+    id: `yt-${youtubeId}`,
+    title: entry.title ?? "Sin titulo",
+    artist: entry.uploader ?? entry.channel ?? fallbackArtist ?? "Artista desconocido",
+    durationSeconds: entry.duration ?? 0,
+    downloaded: false,
+    artworkUrl: entry.thumbnail ?? entry.thumbnails?.[0]?.url,
+    youtubeId,
+    addedAt: Date.now(),
+  };
+}
+
+function downloadedCount(playlist: Playlist): number {
+  const byId = new Map(StorageService.getTracks().map((t) => [t.youtubeId, t]));
+  return playlist.tracks.filter((track) => {
+    if (track.downloaded) return true;
+    const current = track.youtubeId ? byId.get(track.youtubeId) : undefined;
+    return Boolean(current?.downloaded);
+  }).length;
+}
+
 export function PlaylistsView({ onOpenAddModal }: Props) {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const { dispatch } = usePlayer();
 
   useEffect(() => {
@@ -39,14 +58,73 @@ export function PlaylistsView({ onOpenAddModal }: Props) {
 
   const selectedPlaylist = playlists.find((p) => p.id === selectedId);
 
-  const handleSync = (playlist: Playlist) => {
-    DownloadManager.enqueueTracks(playlist.tracks);
-    StorageService.addPlaylist({
-      ...playlist,
-      downloadedCount: playlist.totalTracks,
-      newTracks: 0,
-      updatedAt: Date.now(),
-    });
+  /**
+   * Sincroniza la playlist contra YouTube: descubre pistas nuevas, las añade a
+   * la biblioteca y las pone en cola. Antes esta accion se limitaba a marcar
+   * todo como descargado sin descargar nada.
+   */
+  const handleSync = async (playlist: Playlist) => {
+    if (!playlist.url) {
+      setSyncMessage("Esta lista no tiene URL de origen; usa \"Añadir playlist\" para importarla de nuevo.");
+      return;
+    }
+
+    setSyncingId(playlist.id);
+    setSyncMessage(null);
+    const settings = StorageService.getSettings();
+
+    try {
+      const scanned = await scanPlaylist(
+        playlist.url,
+        settings.browserAuth ? "browser" : "none",
+        settings.selectedBrowser,
+      );
+
+      const known = new Set(
+        playlist.tracks.map((track) => track.youtubeId).filter(Boolean),
+      );
+      const discovered = scanned.entries
+        .map((entry) =>
+          entryToTrack(entry, scanned.uploader ?? scanned.channel ?? scanned.artist),
+        )
+        .filter((track): track is Track => track !== null);
+      const fresh = discovered.filter((track) => !known.has(track.youtubeId));
+
+      if (fresh.length > 0) {
+        StorageService.addTracks(fresh);
+      }
+
+      const merged = [...playlist.tracks, ...fresh];
+      StorageService.addPlaylist({
+        ...playlist,
+        name: scanned.title ?? playlist.name,
+        artworkUrl: scanned.thumbnail ?? playlist.artworkUrl,
+        tracks: merged,
+        totalTracks: merged.length,
+        newTracks: fresh.length,
+        downloadedCount: merged.filter((track) => track.downloaded).length,
+        updatedAt: Date.now(),
+      });
+
+      const pending = merged.filter((track) => !track.downloaded);
+      if (pending.length > 0) {
+        DownloadManager.enqueueTracks(pending);
+      }
+
+      setSyncMessage(
+        fresh.length > 0
+          ? `Sincronizada: ${fresh.length} pista(s) nueva(s), ${pending.length} en cola de descarga.`
+          : pending.length > 0
+            ? `Sin novedades. ${pending.length} pista(s) pendientes enviadas a la cola.`
+            : "Sin novedades: todas las pistas ya estan en disco.",
+      );
+    } catch (error) {
+      setSyncMessage(
+        `No se pudo sincronizar: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`,
+      );
+    } finally {
+      setSyncingId(null);
+    }
   };
 
   const handlePlayPlaylist = (playlist: Playlist) => {
@@ -71,7 +149,7 @@ export function PlaylistsView({ onOpenAddModal }: Props) {
         </div>
 
         <button className="btn btn-sm" onClick={onOpenAddModal}>
-          <IconPlus size={16} stroke={2} />
+          <Icon icon="solar:add-circle-bold" size={16} />
           <span>Añadir playlist</span>
         </button>
       </div>
@@ -115,7 +193,7 @@ export function PlaylistsView({ onOpenAddModal }: Props) {
                   overflow: "hidden",
                 }}
               >
-                {!pl.artworkUrl && <IconPlaylist size={36} stroke={1.5} color="white" />}
+                {!pl.artworkUrl && <Icon icon="solar:playlist-bold" size={36} color="white" />}
                 <button
                   className="btn-icon"
                   onClick={(e) => {
@@ -132,7 +210,7 @@ export function PlaylistsView({ onOpenAddModal }: Props) {
                     boxShadow: "var(--shadow)",
                   }}
                 >
-                  <IconPlayerPlay size={18} stroke={2} />
+                  <Icon icon="solar:play-bold" size={18} />
                 </button>
               </div>
 
@@ -156,7 +234,7 @@ export function PlaylistsView({ onOpenAddModal }: Props) {
                 }}
               >
                 <span className="badge" style={{ fontSize: "var(--text-xs)" }}>
-                  {pl.downloadedCount}/{pl.totalTracks} descargadas
+                  {downloadedCount(pl)}/{pl.tracks.length} descargadas
                 </span>
                 {pl.newTracks > 0 && (
                   <span className="badge badge-accent">+{pl.newTracks} nuevas</span>
@@ -183,16 +261,21 @@ export function PlaylistsView({ onOpenAddModal }: Props) {
                 className="btn btn-ghost btn-sm"
                 onClick={() => handlePlayPlaylist(selectedPlaylist)}
               >
-                <IconPlayerPlay size={16} stroke={2} />
+                <Icon icon="solar:play-bold" size={16} />
                 <span>Reproducir lista</span>
               </button>
 
               <button
                 className="btn btn-ghost btn-sm"
-                onClick={() => handleSync(selectedPlaylist)}
+                onClick={() => void handleSync(selectedPlaylist)}
+                disabled={syncingId === selectedPlaylist.id}
               >
-                <IconRefresh size={16} stroke={1.75} />
-                <span>Sincronizar</span>
+                <Icon
+                  icon="solar:refresh-circle-bold"
+                  size={16}
+                  className={syncingId === selectedPlaylist.id ? "anim-pulse" : ""}
+                />
+                <span>{syncingId === selectedPlaylist.id ? "Sincronizando..." : "Sincronizar"}</span>
               </button>
 
               <button
@@ -200,16 +283,22 @@ export function PlaylistsView({ onOpenAddModal }: Props) {
                 onClick={() => handleDeletePlaylist(selectedPlaylist)}
                 style={{ color: "var(--danger)" }}
               >
-                <IconTrash size={16} stroke={1.75} />
+                <Icon icon="solar:trash-bin-trash-bold" size={16} />
                 <span>Eliminar</span>
               </button>
             </div>
           </div>
 
+          {syncMessage && (
+            <p className="muted" style={{ fontSize: "var(--text-sm)", marginBottom: "var(--space-3)" }}>
+              {syncMessage}
+            </p>
+          )}
+
           <TrackList
             tracks={selectedPlaylist.tracks}
             emptyTitle="La playlist no tiene pistas"
-            emptyMessage="Inspecciona el enlace de YouTube para actualizar o sincronizar las canciones."
+            emptyMessage="Pulsa Sincronizar para volver a leer las canciones desde YouTube."
           />
         </div>
       )}

@@ -1,52 +1,92 @@
-import { downloadTrack } from "../api";
-import type { DownloadItem, Track } from "../types";
+/**
+ * Cola de descargas con progreso real.
+ *
+ * Cambios respecto a la version anterior:
+ *  * El progreso viene de eventos del backend (yt-dlp), no de Math.random().
+ *  * No hay un tiempo de espera de 45 s que abortaba cualquier descarga real.
+ *  * Al arrancar, lo que quedo "downloading" se devuelve a la cola: antes esos
+ *    elementos se quedaban colgados para siempre.
+ *  * Las descargas se pueden cancelar y la ruta final la entrega yt-dlp.
+ */
+
+import {
+  cancelDownload,
+  downloadTrack,
+  onDownloadProgress,
+} from "../api";
+import type { DownloadItem, DownloadProgressEvent, Track } from "../types";
 import { StorageService } from "./storage";
 
-type DownloadListener = (downloads: DownloadItem[]) => void;
-const listeners = new Set<DownloadListener>();
-
-/** Número máximo de descargas simultáneas */
+/** Descargas simultaneas. */
 const MAX_CONCURRENT = 3;
 
-/** Número de slots activos actualmente */
 let activeSlots = 0;
-
-/** Bandera para evitar flush recursivo */
+let started = false;
 let flushScheduled = false;
 
+/** Ids con una invocacion en curso. */
+const inflight = new Set<string>();
+
+function youtubeUrlFor(track: Track): string {
+  if (track.youtubeId) return `https://www.youtube.com/watch?v=${track.youtubeId}`;
+  return "";
+}
+
 export const DownloadManager = {
-  init(): void {
+  async init(): Promise<void> {
+    if (started) return;
+    started = true;
+
+    // Recuperacion: nada puede quedarse permanentemente en "downloading".
+    const recovered = StorageService.getDownloads().map((item) =>
+      item.status === "downloading"
+        ? {
+            ...item,
+            status: "pending" as const,
+            progress: 0,
+            speed: undefined,
+            eta: undefined,
+            stage: undefined,
+          }
+        : item,
+    );
+    StorageService.replaceDownloads(recovered);
+
+    await onDownloadProgress((progress) => {
+      this.applyProgress(progress);
+    });
+
     this.scheduleFlush();
   },
 
-  subscribe(fn: DownloadListener): () => void {
-    listeners.add(fn);
-    return () => listeners.delete(fn);
-  },
+  applyProgress(progress: DownloadProgressEvent): void {
+    const item = StorageService.getDownloads().find((d) => d.id === progress.id);
+    if (!item) return;
+    // Los estados terminales los fija el resultado de la invocacion.
+    if (progress.stage === "error" || progress.stage === "cancelled") return;
 
-  notify(): void {
-    const items = StorageService.getDownloads();
-    listeners.forEach((fn) => {
-      try {
-        fn(items);
-      } catch {
-        // Ignorar errores de oyentes
-      }
+    StorageService.updateDownload(progress.id, {
+      status: progress.stage === "finished" ? "completed" : "downloading",
+      progress: Math.round(progress.percent * 10) / 10,
+      speed: progress.speed,
+      eta: progress.eta,
+      stage: progress.stage,
     });
   },
 
   enqueueTrack(track: Track, customUrl?: string): void {
-    const url = customUrl || (track.youtubeId ? `https://www.youtube.com/watch?v=${track.youtubeId}` : "");
+    const url = customUrl ?? youtubeUrlFor(track);
     if (!url) return;
 
-    // Prevención robusta de duplicados: por URL exacta
     const existing = StorageService.getDownloads();
     const alreadyQueued = existing.some(
-      (d) => d.url === url && (d.status === "pending" || d.status === "downloading"),
+      (item) =>
+        item.url === url &&
+        (item.status === "pending" || item.status === "downloading"),
     );
     if (alreadyQueued) return;
 
-    const newItem: DownloadItem = {
+    const item: DownloadItem = {
       id: `dl-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       trackId: track.id,
       title: track.title,
@@ -58,8 +98,7 @@ export const DownloadManager = {
       addedAt: Date.now(),
     };
 
-    StorageService.addDownload(newItem);
-    this.notify();
+    StorageService.replaceDownloads([item, ...existing]);
     this.scheduleFlush();
   },
 
@@ -71,173 +110,215 @@ export const DownloadManager = {
         .map((d) => d.url),
     );
 
-    let added = 0;
-    for (const t of tracks) {
-      if (t.downloaded) continue;
-
-      const url = t.youtubeId ? `https://www.youtube.com/watch?v=${t.youtubeId}` : "";
-      if (!url || activeUrls.has(url)) continue;
-
+    const created: DownloadItem[] = [];
+    tracks.forEach((track, index) => {
+      if (track.downloaded) return;
+      const url = youtubeUrlFor(track);
+      if (!url || activeUrls.has(url)) return;
       activeUrls.add(url);
-
-      const newItem: DownloadItem = {
-        id: `dl-${Date.now()}-${added}-${Math.random().toString(36).slice(2, 7)}`,
-        trackId: t.id,
-        title: t.title,
-        artist: t.artist,
-        youtubeId: t.youtubeId,
+      created.push({
+        id: `dl-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`,
+        trackId: track.id,
+        title: track.title,
+        artist: track.artist,
+        youtubeId: track.youtubeId,
         url,
         progress: 0,
         status: "pending",
         addedAt: Date.now(),
-      };
+      });
+    });
 
-      StorageService.addDownload(newItem);
-      added++;
-    }
-
-    if (added > 0) {
-      this.notify();
-      this.scheduleFlush();
-    }
+    if (created.length === 0) return;
+    StorageService.replaceDownloads([...created, ...existing]);
+    this.scheduleFlush();
   },
 
-  /** Programa un ciclo de flush en el siguiente micro-tick */
   scheduleFlush(): void {
     if (flushScheduled) return;
     flushScheduled = true;
-    // Usar setTimeout(0) en lugar de queueMicrotask para dar tiempo al render
     setTimeout(() => {
       flushScheduled = false;
       this.fillSlots();
     }, 50);
   },
 
-  /** Lanza descargas hasta llenar MAX_CONCURRENT slots */
   fillSlots(): void {
-    const items = StorageService.getDownloads();
-    const pending = items.filter((d) => d.status === "pending");
+    const pending = StorageService.getDownloads().filter(
+      (item) => item.status === "pending",
+    );
 
-    while (activeSlots < MAX_CONCURRENT && pending.length > 0) {
-      const item = pending.shift()!;
+    for (const item of pending) {
+      if (activeSlots >= MAX_CONCURRENT) break;
+      if (inflight.has(item.id)) continue;
       activeSlots++;
       void this.processItem(item);
     }
   },
 
-  /** Procesa una descarga individual en su propio slot */
   async processItem(item: DownloadItem): Promise<void> {
-    // Marcar como descargando
-    StorageService.updateDownload(item.id, {
-      status: "downloading",
-      progress: 5,
-      speed: "Conectando...",
-    });
-    this.notify();
-
-    // Pulso de progreso visual
-    const startTime = Date.now();
-    const progressInterval = setInterval(() => {
-      const current = StorageService.getDownloads().find((d) => d.id === item.id);
-      if (current && current.status === "downloading" && current.progress < 90) {
-        const elapsed = (Date.now() - startTime) / 1000;
-        const nextProgress = Math.min(90, current.progress + Math.floor(Math.random() * 8 + 3));
-        const estimatedSpeed = elapsed > 2 ? `${(Math.random() * 3 + 1.5).toFixed(1)} MB/s` : "Descargando...";
-        StorageService.updateDownload(item.id, {
-          progress: nextProgress,
-          speed: estimatedSpeed,
-        });
-        this.notify();
-      }
-    }, 1200);
-
+    inflight.add(item.id);
     const settings = StorageService.getSettings();
-    const timeoutPromise = new Promise<{ ok: boolean; file_path?: string; error?: string }>((resolve) => {
-      setTimeout(() => resolve({ ok: false, error: "Tiempo de espera de descarga agotado" }), 45000);
-    });
+
+    StorageService.updateDownload(
+      item.id,
+      {
+        status: "downloading",
+        progress: 0,
+        speed: undefined,
+        eta: undefined,
+        stage: "starting",
+        error: undefined,
+      },
+      true,
+    );
 
     try {
-      let res: { ok: boolean; file_path?: string; error?: string };
-
-      if (item.url.includes("watch?v=demo-") || item.url.includes("watch?v=seed-") || !item.url.includes("youtube.com")) {
-        await new Promise((r) => setTimeout(r, 600));
-        res = { ok: true, file_path: settings.musicDir };
-      } else {
-        res = await Promise.race([
-          downloadTrack(
-            item.url,
-            settings.musicDir,
-            settings.audioFormat,
-            settings.browserAuth ? "browser" : "none",
-            settings.selectedBrowser,
-          ),
-          timeoutPromise,
-        ]);
-      }
-
-      clearInterval(progressInterval);
-
-      if (res.ok) {
-        StorageService.updateDownload(item.id, {
-          status: "completed",
-          progress: 100,
-          speed: undefined,
-        });
-        StorageService.updateTrack(item.trackId, {
-          downloaded: true,
-          path: res.file_path,
-          format: settings.audioFormat.toUpperCase(),
-        });
-      } else {
-        StorageService.updateDownload(item.id, {
-          status: "error",
-          error: res.error || "Fallo en la extracción de audio",
-          speed: undefined,
-        });
-      }
-    } catch (err) {
-      clearInterval(progressInterval);
-      StorageService.updateDownload(item.id, {
-        status: "error",
-        error: String(err),
-        speed: undefined,
+      const outcome = await downloadTrack({
+        id: item.id,
+        url: item.url,
+        outputDir: settings.musicDir,
+        format: settings.audioFormat,
+        auth: settings.browserAuth ? "browser" : "none",
+        browser: settings.selectedBrowser,
       });
+
+      if (outcome.cancelled) {
+        StorageService.updateDownload(
+          item.id,
+          {
+            status: "cancelled",
+            progress: 0,
+            speed: undefined,
+            eta: undefined,
+            stage: undefined,
+          },
+          true,
+        );
+      } else if (outcome.ok) {
+        StorageService.updateDownload(
+          item.id,
+          {
+            status: "completed",
+            progress: 100,
+            speed: undefined,
+            eta: undefined,
+            stage: "finished",
+            filePath: outcome.filePath,
+            error: undefined,
+          },
+          true,
+        );
+
+        if (outcome.filePath) {
+          StorageService.updateTrack(item.trackId, {
+            downloaded: true,
+            path: outcome.filePath,
+            format: settings.audioFormat.toUpperCase(),
+          });
+        }
+      } else {
+        StorageService.updateDownload(
+          item.id,
+          {
+            status: "error",
+            progress: 0,
+            speed: undefined,
+            eta: undefined,
+            stage: undefined,
+            error: outcome.error ?? "La descarga fallo sin detalle",
+          },
+          true,
+        );
+      }
+    } catch (error) {
+      StorageService.updateDownload(
+        item.id,
+        {
+          status: "error",
+          progress: 0,
+          speed: undefined,
+          eta: undefined,
+          stage: undefined,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        true,
+      );
+    } finally {
+      inflight.delete(item.id);
+      activeSlots = Math.max(0, activeSlots - 1);
+      this.scheduleFlush();
     }
+  },
 
-    this.notify();
+  async cancel(id: string): Promise<void> {
+    const item = StorageService.getDownloads().find((d) => d.id === id);
+    if (!item) return;
 
-    // Liberar slot y lanzar siguiente
-    activeSlots--;
-    this.scheduleFlush();
+    if (item.status === "pending") {
+      StorageService.updateDownload(
+        id,
+        { status: "cancelled", progress: 0, stage: undefined },
+        true,
+      );
+      return;
+    }
+    if (item.status === "downloading") {
+      await cancelDownload(id);
+    }
+  },
+
+  async cancelAllPending(): Promise<void> {
+    const items = StorageService.getDownloads().map((item) =>
+      item.status === "pending"
+        ? { ...item, status: "cancelled" as const, progress: 0 }
+        : item,
+    );
+    StorageService.replaceDownloads(items);
   },
 
   retryDownload(id: string): void {
-    StorageService.updateDownload(id, {
-      status: "pending",
-      progress: 0,
-      error: undefined,
-    });
-    this.notify();
+    StorageService.updateDownload(
+      id,
+      {
+        status: "pending",
+        progress: 0,
+        error: undefined,
+        speed: undefined,
+        eta: undefined,
+        stage: undefined,
+      },
+      true,
+    );
     this.scheduleFlush();
   },
 
   removeDownload(id: string): void {
     StorageService.removeDownload(id);
-    this.notify();
   },
 
   clearCompleted(): void {
-    StorageService.clearCompletedDownloads();
-    this.notify();
+    StorageService.replaceDownloads(
+      StorageService.getDownloads().filter((item) => item.status !== "completed"),
+    );
   },
 
-  clearPending(): void {
-    StorageService.clearPendingDownloads();
-    this.notify();
+  clearFinished(): void {
+    // Conserva solo lo que sigue vivo: pendiente o descargando.
+    StorageService.replaceDownloads(
+      StorageService.getDownloads().filter(
+        (item) => item.status === "pending" || item.status === "downloading",
+      ),
+    );
   },
 
   clearAll(): void {
-    StorageService.clearAllDownloads();
-    this.notify();
+    StorageService.replaceDownloads([]);
+  },
+
+  get activeCount(): number {
+    return StorageService.getDownloads().filter(
+      (item) => item.status === "pending" || item.status === "downloading",
+    ).length;
   },
 };

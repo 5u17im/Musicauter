@@ -1,10 +1,4 @@
-import {
-  IconList,
-  IconPlayerPause,
-  IconPlayerPlay,
-  IconTrash,
-  IconX,
-} from "@tabler/icons-react";
+import { Icon } from "./ui/Icon";
 import { usePlayer } from "../context/PlayerContext";
 import { formatDur } from "./TrackList";
 
@@ -36,7 +30,7 @@ export function QueueDrawer({ isOpen, onClose }: Props) {
     <aside className="queue-drawer" aria-label="Cola de reproducción">
       <div className="queue-head">
         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-          <IconList size={20} stroke={1.75} color="var(--accent)" />
+          <Icon icon="solar:list-bold" size={20} color="var(--accent)" />
           <span style={{ fontWeight: 700, fontSize: "var(--text-base)" }}>
             Cola ({state.queue.length})
           </span>
@@ -49,11 +43,11 @@ export function QueueDrawer({ isOpen, onClose }: Props) {
               aria-label="Vaciar cola"
               title="Vaciar cola"
             >
-              <IconTrash size={16} stroke={1.75} />
+              <Icon icon="solar:trash-bin-trash-bold" size={16} />
             </button>
           )}
           <button className="icon-btn-sm" onClick={onClose} aria-label="Cerrar panel de cola">
-            <IconX size={18} stroke={1.75} />
+            <Icon icon="solar:close-linear" size={18} />
           </button>
         </div>
       </div>
@@ -88,9 +82,9 @@ export function QueueDrawer({ isOpen, onClose }: Props) {
                 <div style={{ width: "1.2rem", textAlign: "center", fontSize: "var(--text-xs)", flexShrink: 0 }}>
                   {isCurrent ? (
                     state.status === "playing" ? (
-                      <IconPlayerPause size={14} stroke={2} />
+                      <Icon icon="solar:pause-bold" size={14} />
                     ) : (
-                      <IconPlayerPlay size={14} stroke={2} />
+                      <Icon icon="solar:play-bold" size={14} />
                     )
                   ) : (
                     idx + 1
@@ -139,7 +133,7 @@ export function QueueDrawer({ isOpen, onClose }: Props) {
                   aria-label="Quitar de la cola"
                   title="Quitar"
                 >
-                  <IconX size={14} stroke={1.75} />
+                  <Icon icon="solar:close-linear" size={14} />
                 </button>
               </div>
             );

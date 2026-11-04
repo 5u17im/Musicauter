@@ -1,16 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import {
-  IconAlertCircle,
-  IconCheck,
-  IconClock,
-  IconDownload,
-  IconFolder,
-  IconLoader2,
-  IconRefresh,
-  IconTrash,
-  IconX,
-} from "@tabler/icons-react";
-import { openFolder } from "../api";
+import { Icon } from "../components/ui/Icon";
+import { openPath } from "../api";
 import { DownloadManager } from "../services/downloadManager";
 import { StorageService } from "../services/storage";
 import type { DownloadItem } from "../types";
@@ -20,14 +10,10 @@ export function DownloadsView() {
   const [filter, setFilter] = useState<"all" | "active" | "completed" | "error">("all");
 
   useEffect(() => {
-    const load = () => setDownloads(StorageService.getDownloads());
+    // StorageService notifica tanto los cambios de estado como el progreso.
+    const load = () => setDownloads([...StorageService.getDownloads()]);
     load();
-    const unsubStorage = StorageService.subscribe(load);
-    const unsubManager = DownloadManager.subscribe(load);
-    return () => {
-      unsubStorage();
-      unsubManager();
-    };
+    return StorageService.subscribe(load);
   }, []);
 
   const filteredDownloads = useMemo(() => {
@@ -38,7 +24,9 @@ export function DownloadsView() {
       return downloads.filter((d) => d.status === "completed");
     }
     if (filter === "error") {
-      return downloads.filter((d) => d.status === "error");
+      return downloads.filter(
+        (d) => d.status === "error" || d.status === "cancelled",
+      );
     }
     return downloads;
   }, [downloads, filter]);
@@ -61,21 +49,23 @@ export function DownloadsView() {
   );
 
   const errorCount = useMemo(
-    () => downloads.filter((d) => d.status === "error").length,
+    () =>
+      downloads.filter((d) => d.status === "error" || d.status === "cancelled")
+        .length,
     [downloads],
   );
 
   const handleOpenFolder = () => {
     const settings = StorageService.getSettings();
-    openFolder(settings.musicDir);
+    void openPath(settings.musicDir);
   };
 
   const handleClearCompleted = () => {
     DownloadManager.clearCompleted();
   };
 
-  const handleClearPending = () => {
-    DownloadManager.clearPending();
+  const handleCancelPending = () => {
+    void DownloadManager.cancelAllPending();
   };
 
   const handleClearAll = () => {
@@ -104,27 +94,27 @@ export function DownloadsView() {
 
         <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
           <button className="btn btn-ghost btn-sm" onClick={handleOpenFolder}>
-            <IconFolder size={16} stroke={1.75} />
+            <Icon icon="solar:folder-2-bold" size={16} />
             <span>Abrir carpeta</span>
           </button>
 
           {pendingCount > 0 && (
-            <button className="btn btn-ghost btn-sm" onClick={handleClearPending} title="Cancelar descargas en espera">
-              <IconX size={16} stroke={1.75} />
+            <button className="btn btn-ghost btn-sm" onClick={handleCancelPending} title="Cancelar las descargas que aun no han empezado">
+              <Icon icon="solar:forbidden-circle-bold" size={16} />
               <span>Cancelar en espera ({pendingCount})</span>
             </button>
           )}
 
           {completedCount > 0 && (
             <button className="btn btn-ghost btn-sm" onClick={handleClearCompleted}>
-              <IconCheck size={16} stroke={2} />
+              <Icon icon="solar:check-circle-bold" size={16} />
               <span>Limpiar completadas</span>
             </button>
           )}
 
           {downloads.length > 0 && (
             <button className="btn btn-ghost btn-sm" onClick={handleClearAll} title="Limpiar todo el historial">
-              <IconTrash size={16} stroke={1.75} />
+              <Icon icon="solar:trash-bin-trash-bold" size={16} />
               <span>Limpiar todo</span>
             </button>
           )}
@@ -147,7 +137,7 @@ export function DownloadsView() {
             fontWeight: 600,
           }}
         >
-          <IconLoader2 size={18} stroke={2} className="anim-spin" />
+          <Icon icon="solar:restart-bold" size={18} className="anim-spin" />
           <span>
             Descargando {downloadingCount} de {activeCount} pista{activeCount !== 1 ? "s" : ""}
             {pendingCount > 0 && ` · ${pendingCount} en cola`}
@@ -167,29 +157,29 @@ export function DownloadsView() {
           className={`btn btn-ghost btn-sm ${filter === "active" ? "badge-accent" : ""}`}
           onClick={() => setFilter("active")}
         >
-          <IconDownload size={14} stroke={1.75} />
+          <Icon icon="solar:download-square-bold" size={14} />
           <span>En progreso ({activeCount})</span>
         </button>
         <button
           className={`btn btn-ghost btn-sm ${filter === "completed" ? "badge-accent" : ""}`}
           onClick={() => setFilter("completed")}
         >
-          <IconCheck size={14} stroke={2} />
+          <Icon icon="solar:check-circle-bold" size={14} />
           <span>Completadas ({completedCount})</span>
         </button>
         <button
           className={`btn btn-ghost btn-sm ${filter === "error" ? "badge-accent" : ""}`}
           onClick={() => setFilter("error")}
         >
-          <IconAlertCircle size={14} stroke={1.75} />
-          <span>Fallidas ({errorCount})</span>
+          <Icon icon="solar:danger-circle-bold" size={14} />
+          <span>Con problemas ({errorCount})</span>
         </button>
       </div>
 
       {/* Lista de Descargas */}
       {filteredDownloads.length === 0 ? (
         <div className="empty-state">
-          <IconDownload className="empty-icon" stroke={1.5} />
+          <Icon icon="solar:download-square-bold" size={44} className="empty-icon" />
           <div style={{ fontWeight: 700, fontSize: "var(--text-lg)" }}>
             Sin descargas {filter !== "all" ? `en esta categoría` : `activas`}
           </div>
@@ -217,6 +207,7 @@ function DownloadRow({ item, queuePosition }: { item: DownloadItem; queuePositio
   const isPending = item.status === "pending";
   const isCompleted = item.status === "completed";
   const isError = item.status === "error";
+  const isCancelled = item.status === "cancelled";
 
   return (
     <div
@@ -244,15 +235,18 @@ function DownloadRow({ item, queuePosition }: { item: DownloadItem; queuePositio
                 ? "var(--accent-soft)"
                 : isPending
                   ? "var(--surface-solid)"
-                  : isCompleted
-                    ? "var(--success-soft)"
-                    : "var(--danger-soft)",
+                  : isCancelled
+                    ? "var(--surface-solid)"
+                    : isCompleted
+                      ? "var(--success-soft)"
+                      : "var(--danger-soft)",
             }}
           >
-            {isDownloading && <IconLoader2 size={16} stroke={2} color="var(--accent)" className="anim-spin" />}
-            {isPending && <IconClock size={16} stroke={1.75} color="var(--text-faint)" />}
-            {isCompleted && <IconCheck size={16} stroke={2} color="var(--success)" />}
-            {isError && <IconAlertCircle size={16} stroke={2} color="var(--danger)" />}
+            {isDownloading && <Icon icon="solar:restart-bold" size={16} color="var(--accent)" className="anim-spin" />}
+            {isPending && <Icon icon="solar:clock-circle-bold" size={16} color="var(--text-faint)" />}
+            {isCompleted && <Icon icon="solar:check-circle-bold" size={16} color="var(--success)" />}
+            {isError && <Icon icon="solar:danger-circle-bold" size={16} color="var(--danger)" />}
+            {isCancelled && <Icon icon="solar:forbidden-circle-bold" size={16} color="var(--text-faint)" />}
           </div>
 
           <div style={{ minWidth: 0 }}>
@@ -279,27 +273,61 @@ function DownloadRow({ item, queuePosition }: { item: DownloadItem; queuePositio
           {isDownloading && (
             <>
               <span className="muted" style={{ fontSize: "var(--text-xs)", fontFamily: "var(--font-mono)" }}>
-                {item.speed || "Descargando..."}
+                {item.stage === "converting"
+                  ? "Convirtiendo..."
+                  : item.stage === "starting"
+                    ? "Conectando..."
+                    : item.speed || "Descargando..."}
               </span>
+              {item.eta && (
+                <span className="muted" style={{ fontSize: "var(--text-xs)", fontFamily: "var(--font-mono)" }}>
+                  ETA {item.eta}
+                </span>
+              )}
               <span
                 className="badge badge-accent"
                 style={{ fontFamily: "var(--font-mono)", minWidth: "3rem", justifyContent: "center" }}
               >
-                {item.progress}%
+                {Math.floor(item.progress)}%
               </span>
+              <button
+                className="icon-btn-sm"
+                onClick={() => void DownloadManager.cancel(item.id)}
+                aria-label="Cancelar descarga"
+                title="Cancelar"
+              >
+                <Icon icon="solar:forbidden-circle-bold" size={16} />
+              </button>
+            </>
+          )}
+
+          {isCancelled && (
+            <>
+              <span className="badge" style={{ fontSize: "var(--text-xs)" }}>
+                <Icon icon="solar:info-circle-bold" size={12} />
+                <span>Cancelada</span>
+              </span>
+              <button
+                className="icon-btn-sm"
+                onClick={() => DownloadManager.retryDownload(item.id)}
+                aria-label="Reanudar descarga cancelada"
+                title="Reintentar"
+              >
+                <Icon icon="solar:refresh-circle-bold" size={16} />
+              </button>
             </>
           )}
 
           {isPending && queuePosition != null && (
             <span className="badge" style={{ fontSize: "var(--text-xs)" }}>
-              <IconClock size={12} stroke={2} />
+              <Icon icon="solar:clock-circle-bold" size={12} />
               <span>#{queuePosition} en cola</span>
             </span>
           )}
 
           {isCompleted && (
             <span className="badge badge-success">
-              <IconCheck size={14} stroke={2} />
+              <Icon icon="solar:check-circle-bold" size={14} />
               <span>Listo</span>
             </span>
           )}
@@ -307,7 +335,7 @@ function DownloadRow({ item, queuePosition }: { item: DownloadItem; queuePositio
           {isError && (
             <>
               <span className="badge badge-danger">
-                <IconAlertCircle size={14} stroke={2} />
+                <Icon icon="solar:danger-circle-bold" size={14} />
                 <span>Error</span>
               </span>
               <button
@@ -316,7 +344,7 @@ function DownloadRow({ item, queuePosition }: { item: DownloadItem; queuePositio
                 aria-label="Reintentar descarga"
                 title="Reintentar"
               >
-                <IconRefresh size={16} stroke={1.75} />
+                <Icon icon="solar:refresh-circle-bold" size={16} />
               </button>
             </>
           )}
@@ -327,31 +355,15 @@ function DownloadRow({ item, queuePosition }: { item: DownloadItem; queuePositio
             aria-label="Eliminar registro"
             title="Eliminar"
           >
-            <IconX size={14} stroke={1.75} />
+            <Icon icon="solar:close-linear" size={14} />
           </button>
         </div>
       </div>
 
       {/* Barra de progreso para descargas activas */}
       {isDownloading && (
-        <div
-          style={{
-            width: "100%",
-            height: 4,
-            background: "var(--line)",
-            borderRadius: "var(--radius-full)",
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              height: "100%",
-              width: `${item.progress}%`,
-              background: "var(--accent)",
-              borderRadius: "var(--radius-full)",
-              transition: "width 0.4s ease",
-            }}
-          />
+        <div className="progress-bar progress-active">
+          <div className="progress-fill" style={{ width: `${item.progress}%` }} />
         </div>
       )}
 

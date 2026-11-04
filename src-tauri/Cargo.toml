@@ -1,14 +1,12 @@
 [package]
-name = "app"
+name = "audionave"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
-license = ""
+description = "Reproductor, descargador y organizador de musica para Windows"
+authors = ["Audionave"]
+license = "MIT"
 repository = ""
 edition = "2021"
 rust-version = "1.77.2"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
 name = "app_lib"
@@ -21,5 +19,20 @@ tauri-build = { version = "2.6.3", features = [] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-tauri = { version = "2.11.3", features = [] }
+dirs = "6"
+walkdir = "2"
+uuid = { version = "1", features = ["v4"] }
+tauri = { version = "2.11.3", features = ["tray-icon"] }
 tauri-plugin-log = "2"
+
+# API nativa de Windows para la barra de miniaturas de la barra de tareas.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_System_Com",
+] }
+
+[profile.release]
+strip = true
