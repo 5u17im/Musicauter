@@ -62,12 +62,61 @@ export async function getStatus(): Promise<BackendStatus> {
 }
 
 /** Escribe en el mismo archivo de log que Rust (diagnostico del arranque). */
-export async function frontendLog(message: string): Promise<void> {
+export async function frontendLog(
+  message: string,
+  level: "error" | "warn" | "info" | "debug" = "info",
+): Promise<void> {
   try {
-    await invoke("frontend_log", { message });
+    await invoke("frontend_log", { message, level });
   } catch {
-    /* el log es best-effort */
+    /* el log es best-effort: no puede generar mas errores */
   }
+}
+
+// ---------------------------------------------------------------------------
+// Visor de errores
+// ---------------------------------------------------------------------------
+
+export interface LogEntry {
+  id: number;
+  /** Milisegundos desde la epoca Unix. */
+  timestamp: number;
+  level: "error" | "warn" | "info" | "debug" | "trace";
+  source: "frontend" | "rust" | "yt-dlp";
+  message: string;
+}
+
+export async function getLogEntries(after = 0): Promise<LogEntry[]> {
+  return invoke<LogEntry[]>("get_log_entries", { after });
+}
+
+export async function clearLogEntries(): Promise<void> {
+  return invoke("clear_log_entries");
+}
+
+export async function getLogDir(): Promise<string> {
+  return invoke<string>("get_log_dir");
+}
+
+// ---------------------------------------------------------------------------
+// Chequeo de integridad
+// ---------------------------------------------------------------------------
+
+export interface HealthCheck {
+  id: string;
+  label: string;
+  status: "ok" | "warn" | "error";
+  detail: string;
+  /** Texto del boton de reparacion automatica, si existe. */
+  repair: string | null;
+}
+
+export async function runHealthCheck(): Promise<HealthCheck[]> {
+  return invoke<HealthCheck[]>("run_health_check");
+}
+
+export async function repairHealth(id: string): Promise<string> {
+  return invoke<string>("repair_health", { id });
 }
 
 export async function saveSettings(

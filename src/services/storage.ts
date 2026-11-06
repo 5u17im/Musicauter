@@ -23,6 +23,7 @@ import {
   upsertPlaylist as apiUpsertPlaylist,
   upsertTracks as apiUpsertTracks,
 } from "../api";
+import { reportError } from "./diagnostics";
 import type {
   AppSettings,
   DownloadItem,
@@ -48,8 +49,9 @@ function notify(): void {
   listeners.forEach((listener) => {
     try {
       listener();
-    } catch {
-      /* ignorar oyentes rotos */
+    } catch (error) {
+      // Un oyente roto no debe impedir que el resto se actualice.
+      reportError("oyente de StorageService fallo", error);
     }
   });
 }
@@ -67,10 +69,6 @@ let playlists: Playlist[] = [];
 let downloads: DownloadItem[] = [];
 let settings: AppSettings = { ...DEFAULT_SETTINGS };
 let initialized = false;
-
-function reportError(context: string, error: unknown): void {
-  console.error(`[Audionave] ${context}`, error);
-}
 
 export const StorageService = {
   subscribe(listener: Listener): () => void {
@@ -101,6 +99,16 @@ export const StorageService = {
       }
     }
 
+    notify();
+  },
+
+  /** Vuelve a leer biblioteca, playlists y descargas del almacen nativo. */
+  async reload(): Promise<void> {
+    const snapshot = await getSnapshot();
+    tracks = snapshot.tracks.map(decorate);
+    playlists = snapshot.playlists;
+    downloads = snapshot.downloads;
+    settings = { ...DEFAULT_SETTINGS, ...snapshot.settings };
     notify();
   },
 

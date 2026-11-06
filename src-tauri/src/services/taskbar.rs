@@ -18,8 +18,9 @@
 use super::paths;
 use std::cell::RefCell;
 use std::path::Path;
+use std::sync::atomic::{AtomicU32, Ordering};
 use tauri::{AppHandle, Emitter};
-use windows::core::{GUID, PCWSTR};
+use windows::core::{w, GUID, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
@@ -29,7 +30,7 @@ use windows::Win32::UI::Shell::{
     THB_TOOLTIP, THBF_DISABLED, THBF_ENABLED,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    LoadImageW, HICON, IMAGE_ICON, LR_LOADFROMFILE, WM_COMMAND,
+    LoadImageW, RegisterWindowMessageW, HICON, IMAGE_ICON, LR_LOADFROMFILE, WM_COMMAND,
 };
 
 /// CLSID_TaskbarList {56FDF344-FD6D-11d0-958A-006097C9A090}
@@ -63,7 +64,14 @@ struct TaskbarState {
     icons: Icons,
     playing: bool,
     title: String,
+    /// `ThumbBarAddButtons` solo puede llamarse una vez por boton de la barra
+    /// de tareas. Se vuelve a poner a `false` cuando Windows recrea el boton
+    /// (reinicio del Explorador, cambio de posicion de la barra...).
+    buttons_added: bool,
 }
+
+/// Identificador del mensaje registrado `TaskbarButtonCreated`.
+static BUTTON_CREATED_MSG: AtomicU32 = AtomicU32::new(0);
 
 thread_local! {
     static STATE: RefCell<Option<TaskbarState>> = const { RefCell::new(None) };
@@ -145,6 +153,53 @@ fn make_button(id: u32, icon: HICON, tip: &str, enabled: bool) -> THUMBBUTTON {
 // Procedimiento de ventana
 // ---------------------------------------------------------------------------
 
+/// Crea el objeto `ITaskbarList3` y anade los tres botones de miniatura.
+/// Debe ejecutarse en el hilo principal. Es idempotente: se puede llamar de
+/// nuevo cuando Windows recrea el boton de la barra de tareas.
+unsafe fn add_buttons(hwnd: HWND) {
+    STATE.with(|slot| {
+        let mut guard = slot.borrow_mut();
+        let Some(state) = guard.as_mut() else { return };
+
+        let taskbar: ITaskbarList3 =
+            match CoCreateInstance(&CLSID_TASKBARLIST, None, CLSCTX_INPROC_SERVER) {
+                Ok(taskbar) => taskbar,
+                Err(error) => {
+                    log::warn!("taskbar: no se pudo crear ITaskbarList3: {error}");
+                    return;
+                }
+            };
+
+        if let Err(error) = taskbar.HrInit() {
+            log::warn!("taskbar: HrInit fallo: {error}");
+            return;
+        }
+
+        let center_icon = if state.playing { state.icons.pause } else { state.icons.play };
+        let center_tip = if state.playing { "Pausar" } else { "Reproducir" };
+        let buttons = [
+            make_button(BTN_PREV, state.icons.prev, "Pista anterior", true),
+            make_button(BTN_PLAY, center_icon, center_tip, true),
+            make_button(BTN_NEXT, state.icons.next, "Pista siguiente", true),
+        ];
+
+        match taskbar.ThumbBarAddButtons(hwnd, &buttons) {
+            Ok(()) => {
+                state.taskbar = taskbar;
+                state.hwnd = hwnd;
+                state.buttons_added = true;
+                log::info!("taskbar: botones de miniatura anadidos");
+            }
+            Err(error) => {
+                // El boton de la barra de tareas puede no existir todavia:
+                // Windows avisara con TaskbarButtonCreated y se reintentara.
+                state.buttons_added = false;
+                log::warn!("taskbar: no se pudo anadir la barra de miniaturas: {error}");
+            }
+        }
+    });
+}
+
 unsafe extern "system" fn subclass_proc(
     hwnd: HWND,
     msg: u32,
@@ -153,6 +208,14 @@ unsafe extern "system" fn subclass_proc(
     _uidsubclass: usize,
     _dwrefdata: usize,
 ) -> LRESULT {
+    // Windows envia TaskbarButtonCreated cuando crea (o recrea) el boton de la
+    // ventana: al iniciar, al reiniciarse el Explorador o al cambiar la barra
+    // de tareas de lado. Es el unico momento fiable para anadir los botones.
+    let created = BUTTON_CREATED_MSG.load(Ordering::Relaxed);
+    if created != 0 && msg == created {
+        add_buttons(hwnd);
+    }
+
     if msg == WM_COMMAND {
         let id = (wparam.0 & 0xFFFF) as u32;
         let notification = ((wparam.0 >> 16) & 0xFFFF) as u32;
@@ -214,24 +277,7 @@ pub fn install(app: &AppHandle, hwnd: HWND) {
             return;
         };
 
-        let buttons = [
-            make_button(BTN_PREV, icons.prev, "Pista anterior", true),
-            make_button(BTN_PLAY, icons.play, "Reproducir", true),
-            make_button(BTN_NEXT, icons.next, "Pista siguiente", true),
-        ];
-
-        if let Err(error) = taskbar.ThumbBarAddButtons(hwnd, &buttons) {
-            log::warn!("no se pudo anadir la barra de miniaturas: {error}");
-            return;
-        }
-
         APP.with(|slot| *slot.borrow_mut() = Some(app.clone()));
-
-        if SetWindowSubclass(hwnd, Some(subclass_proc), SUBCLASS_ID, 0).as_bool() {
-            log::info!("barra de miniaturas instalada en la barra de tareas");
-        } else {
-            log::warn!("no se pudo enganchar el procedimiento de ventana");
-        }
 
         STATE.with(|slot| {
             *slot.borrow_mut() = Some(TaskbarState {
@@ -240,8 +286,20 @@ pub fn install(app: &AppHandle, hwnd: HWND) {
                 icons,
                 playing: false,
                 title: String::new(),
+                buttons_added: false,
             });
         });
+
+        BUTTON_CREATED_MSG.store(RegisterWindowMessageW(w!("TaskbarButtonCreated")), Ordering::Relaxed);
+
+        if SetWindowSubclass(hwnd, Some(subclass_proc), SUBCLASS_ID, 0).as_bool() {
+            log::info!("barra de miniaturas instalada en la barra de tareas");
+        } else {
+            log::warn!("no se pudo enganchar el procedimiento de ventana");
+        }
+
+        // Intento inmediato: si el boton ya existe, no habra nuevo aviso.
+        add_buttons(hwnd);
 
         log::info!("taskbar: install completado");
     }
@@ -263,6 +321,9 @@ pub fn apply_playback_state(playing: bool, title: Option<String>) {
         }
         state.playing = playing;
 
+        if !state.buttons_added {
+            return;
+        }
         let tip = match (playing, state.title.is_empty()) {
             (true, true) => "Pausar".to_string(),
             (true, false) => format!("Pausar — {}", truncate(&state.title, 90)),

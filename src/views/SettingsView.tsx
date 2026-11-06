@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { HealthPanel } from "../components/HealthPanel";
+import { LogViewer } from "../components/LogViewer";
 import { Icon } from "../components/ui/Icon";
 import {
   defaultMusicDir,
@@ -42,6 +44,7 @@ export function SettingsView({ theme, onThemeChange }: Props) {
   const [busy, setBusy] = useState<Busy>(null);
   const [message, setMessage] = useState<{ kind: "ok" | "error" | "info"; text: string } | null>(null);
   const [scanProgress, setScanProgress] = useState({ done: 0, total: 0 });
+  const [logOpen, setLogOpen] = useState(false);
 
   const refreshStatus = async () => {
     setBusy("status");
@@ -390,6 +393,22 @@ export function SettingsView({ theme, onThemeChange }: Props) {
           </p>
         </div>
       </SettingCard>
+
+      {/* Diagnostico */}
+      <SettingCard
+        title="Diagnostico y registro"
+        description="Comprueba la integridad de Audionave y consulta los errores registrados. Util para detectar por que algo falla."
+      >
+        <div style={{ marginBottom: "var(--space-4)" }}>
+          <button className="btn btn-ghost btn-sm" onClick={() => setLogOpen(true)}>
+            <Icon icon="solar:bug-bold" size={16} />
+            <span>Abrir registro de errores</span>
+          </button>
+        </div>
+        <HealthPanel />
+      </SettingCard>
+
+      <LogViewer isOpen={logOpen} onClose={() => setLogOpen(false)} />
     </section>
   );
 }

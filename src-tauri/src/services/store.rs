@@ -433,6 +433,76 @@ impl Store {
             .map(Path::to_path_buf)
             .unwrap_or_default()
     }
+
+    /// Rutas de los tres archivos de datos (nombre legible, ruta).
+    pub fn data_files(&self) -> [(&'static str, &Path); 3] {
+        [
+            ("library.json", &self.library_path),
+            ("downloads.json", &self.downloads_path),
+            ("settings.json", &self.settings_path),
+        ]
+    }
+
+    /// Reescribe los tres archivos a partir del estado en memoria, que es la
+    /// fuente de verdad. Repara archivos corruptos o truncados en disco.
+    pub fn persist_all(&self) -> Result<(), String> {
+        self.persist_library()?;
+        self.persist_downloads()?;
+        self.persist_settings()
+    }
+
+    /// Pistas marcadas como descargadas cuyo archivo ya no existe.
+    pub fn missing_files(&self) -> Vec<Track> {
+        lock(&self.library)
+            .tracks
+            .iter()
+            .filter(|t| {
+                t.downloaded
+                    && t.path
+                        .as_deref()
+                        .map(|p| !Path::new(p).is_file())
+                        .unwrap_or(true)
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Resuelve las pistas con archivo ausente: las que tienen origen en
+    /// YouTube pasan a ser de streaming; el resto se elimina del indice.
+    /// Devuelve `(pasadas_a_streaming, eliminadas)`.
+    pub fn prune_missing_files(&self) -> Result<(usize, usize), String> {
+        let (demoted, removed) = {
+            let mut lib = lock(&self.library);
+            let mut demoted = 0;
+            let mut removed = 0;
+            lib.tracks.retain_mut(|track| {
+                let missing = track.downloaded
+                    && track
+                        .path
+                        .as_deref()
+                        .map(|p| !Path::new(p).is_file())
+                        .unwrap_or(true);
+                if !missing {
+                    return true;
+                }
+                if track.youtube_id.is_some() {
+                    track.downloaded = false;
+                    track.path = None;
+                    track.file_size_bytes = None;
+                    demoted += 1;
+                    true
+                } else {
+                    removed += 1;
+                    false
+                }
+            });
+            (demoted, removed)
+        };
+        if demoted + removed > 0 {
+            self.persist_library()?;
+        }
+        Ok((demoted, removed))
+    }
 }
 
 #[cfg(test)]
@@ -466,6 +536,60 @@ mod tests {
             Ok(_) => {}
             Err(_) => panic!("snapshot() se bloqueo: hay un mutex tomado dos veces"),
         }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Una pista descargada cuyo archivo desaparecio pasa a streaming si viene
+    /// de YouTube y se elimina si no; las demas no se tocan.
+    #[test]
+    fn prune_missing_files_demotes_or_removes() {
+        let (store, dir) = scratch_store("prune");
+
+        let real_file = dir.join("real.mp3");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&real_file, b"audio").unwrap();
+
+        let track = |id: &str, path: Option<String>, youtube: Option<&str>| Track {
+            id: id.into(),
+            title: id.into(),
+            downloaded: true,
+            path,
+            youtube_id: youtube.map(String::from),
+            ..Default::default()
+        };
+
+        store
+            .upsert_tracks(vec![
+                track("present", Some(real_file.to_string_lossy().to_string()), Some("a")),
+                track("gone-yt", Some(dir.join("nope1.mp3").to_string_lossy().to_string()), Some("b")),
+                track("gone-local", Some(dir.join("nope2.mp3").to_string_lossy().to_string()), None),
+            ])
+            .unwrap();
+
+        assert_eq!(store.missing_files().len(), 2);
+        assert_eq!(store.prune_missing_files().unwrap(), (1, 1));
+
+        let tracks = store.tracks();
+        assert_eq!(tracks.len(), 2);
+        let demoted = tracks.iter().find(|t| t.id == "gone-yt").unwrap();
+        assert!(!demoted.downloaded && demoted.path.is_none());
+        assert!(tracks.iter().find(|t| t.id == "present").unwrap().downloaded);
+        assert!(store.missing_files().is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `persist_all` debe reparar un archivo de datos corrupto en disco.
+    #[test]
+    fn persist_all_repairs_corrupt_file() {
+        let (store, dir) = scratch_store("repair");
+        std::fs::write(dir.join("library.json"), b"{ esto no es json").unwrap();
+
+        store.persist_all().unwrap();
+
+        let raw = std::fs::read_to_string(dir.join("library.json")).unwrap();
+        assert!(serde_json::from_str::<serde_json::Value>(&raw).is_ok());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

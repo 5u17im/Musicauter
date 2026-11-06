@@ -57,12 +57,72 @@ fn ffmpeg_of(app: &AppHandle) -> String {
 
 /// Permite a la interfaz escribir en el mismo archivo de log que Rust.
 /// Es lo que hace diagnosticable un cuelgue en el arranque.
+///
+/// `level` admite `error`, `warn`, `debug`; por defecto `info`.
+#[tauri::command(async)]
+fn frontend_log(message: String, level: Option<String>) {
+    match level.as_deref() {
+        Some("error") => log::error!(target: "audionave_frontend", "{message}"),
+        Some("warn") => log::warn!(target: "audionave_frontend", "{message}"),
+        Some("debug") => log::debug!(target: "audionave_frontend", "{message}"),
+        _ => log::info!(target: "audionave_frontend", "{message}"),
+    }
+}
+
+/// Entradas del visor de errores con id mayor que `after` (0 = todas).
+#[tauri::command(async)]
+fn get_log_entries(after: Option<u64>) -> Vec<services::diagnostics::LogEntry> {
+    services::diagnostics::entries_after(after.unwrap_or(0))
+}
+
+#[tauri::command(async)]
+fn clear_log_entries() {
+    services::diagnostics::clear();
+}
+
+/// Ruta de la carpeta de logs en disco.
+#[tauri::command(async)]
+fn get_log_dir(app: AppHandle) -> String {
+    paths::app_data_dir(&app)
+        .join("logs")
+        .to_string_lossy()
+        .to_string()
+}
+
+/// Chequeo de integridad del sistema (ver `services::health`).
 #[tauri::command]
-fn frontend_log(message: String) {
-    log::info!(target: "audionave_frontend", "{message}");
+async fn run_health_check(
+    app: AppHandle,
+    store: State<'_, Arc<Store>>,
+    media: State<'_, Arc<MediaServer>>,
+) -> Result<Vec<services::health::HealthCheck>, String> {
+    let store = store.inner().clone();
+    let (port, token) = (media.port, media.token.clone());
+    tauri::async_runtime::spawn_blocking(move || services::health::run(&app, &store, port, &token))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Reparacion automatica asociada a una comprobacion del chequeo.
+#[tauri::command]
+async fn repair_health(store: State<'_, Arc<Store>>, id: String) -> Result<String, String> {
+    let store = store.inner().clone();
+    let outcome = tauri::async_runtime::spawn_blocking(move || services::health::repair(&id, &store))
+        .await
+        .map_err(|e| e.to_string())?;
+    match &outcome {
+        Ok(summary) => log::info!("reparacion aplicada: {summary}"),
+        Err(error) => log::error!("la reparacion fallo: {error}"),
+    }
+    outcome
 }
 
 fn persist_geometry(store: &Store, x: i32, y: i32, width: u32, height: u32, maximized: bool) {
+    // Una ventana minimizada reporta coordenadas como (-32000, -32000): si se
+    // guardaran, el siguiente arranque abriria la ventana fuera de pantalla.
+    if x <= -10_000 || y <= -10_000 || width < 200 || height < 200 {
+        return;
+    }
     store.set_window_state(services::store::WindowState {
         x,
         y,
@@ -74,6 +134,9 @@ fn persist_geometry(store: &Store, x: i32, y: i32, width: u32, height: u32, maxi
 
 /// Guarda la geometria desde una ventana webview (comandos).
 fn save_window_state(window: &tauri::WebviewWindow, store: &Store) {
+    if window.is_minimized().unwrap_or(false) {
+        return;
+    }
     let maximized = window.is_maximized().unwrap_or(false);
     let (x, y) = window.outer_position().map(|p| (p.x, p.y)).unwrap_or((0, 0));
     let size = window.outer_size().unwrap_or_default();
@@ -82,17 +145,56 @@ fn save_window_state(window: &tauri::WebviewWindow, store: &Store) {
 
 /// Guarda la geometria desde el manejador de eventos (tipo Window).
 fn save_window_event_state(window: &tauri::Window, store: &Store) {
+    if window.is_minimized().unwrap_or(false) {
+        return;
+    }
     let maximized = window.is_maximized().unwrap_or(false);
     let (x, y) = window.outer_position().map(|p| (p.x, p.y)).unwrap_or((0, 0));
     let size = window.outer_size().unwrap_or_default();
     persist_geometry(store, x, y, size.width, size.height, maximized);
 }
 
+/// Ajusta una geometria guardada al area de trabajo de algun monitor
+/// disponible. Cubre monitores desconectados, cambios de resolucion y la barra
+/// de tareas de Windows en cualquier lado (el area de trabajo ya la excluye).
+fn fit_to_work_area(
+    app: &AppHandle,
+    state: &services::store::WindowState,
+) -> Option<(i32, i32, u32, u32)> {
+    let monitors = app.available_monitors().ok()?;
+    if monitors.is_empty() {
+        return None;
+    }
+
+    // Monitor con mayor interseccion con la ventana guardada.
+    let overlap = |m: &tauri::Monitor| -> i64 {
+        let area = m.work_area();
+        let left = state.x.max(area.position.x) as i64;
+        let top = state.y.max(area.position.y) as i64;
+        let right = (state.x + state.width as i32).min(area.position.x + area.size.width as i32) as i64;
+        let bottom = (state.y + state.height as i32).min(area.position.y + area.size.height as i32) as i64;
+        ((right - left).max(0)) * ((bottom - top).max(0))
+    };
+
+    let best = monitors.iter().max_by_key(|m| overlap(m))?;
+    let area = best.work_area();
+
+    let width = state.width.min(area.size.width);
+    let height = state.height.min(area.size.height);
+
+    let max_x = area.position.x + area.size.width as i32 - width as i32;
+    let max_y = area.position.y + area.size.height as i32 - height as i32;
+    let x = state.x.clamp(area.position.x, max_x.max(area.position.x));
+    let y = state.y.clamp(area.position.y, max_y.max(area.position.y));
+
+    Some((x, y, width, height))
+}
+
 // ---------------------------------------------------------------------------
 // Comandos: estado y ajustes
 // ---------------------------------------------------------------------------
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_snapshot(store: State<'_, Arc<Store>>) -> Snapshot {
     store.snapshot()
 }
@@ -141,12 +243,12 @@ async fn get_status(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn save_settings(store: State<'_, Arc<Store>>, patch: Value) -> Result<services::store::Settings, String> {
     store.save_settings(patch)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_music_dir(
     store: State<'_, Arc<Store>>,
     path: String,
@@ -158,22 +260,22 @@ fn set_music_dir(
     }))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn default_music_dir() -> String {
     paths::default_music_dir().to_string_lossy().to_string()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn pick_folder(current: Option<String>) -> Option<String> {
     services::shell::pick_folder(current.as_deref().unwrap_or(""))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn open_music_folder(store: State<'_, Arc<Store>>) -> bool {
     services::shell::open_folder(&store.music_dir())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn open_path(path: Option<String>, store: State<'_, Arc<Store>>) -> bool {
     match path {
         Some(p) if !p.trim().is_empty() => services::shell::open_folder(&paths::normalize_user_path(&p)),
@@ -181,12 +283,12 @@ fn open_path(path: Option<String>, store: State<'_, Arc<Store>>) -> bool {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn reveal_file(path: String) -> bool {
     services::shell::reveal_file(Path::new(&path))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn open_external(url: String) -> bool {
     services::shell::open_url(&url)
 }
@@ -195,27 +297,27 @@ fn open_external(url: String) -> bool {
 // Comandos: biblioteca
 // ---------------------------------------------------------------------------
 
-#[tauri::command]
+#[tauri::command(async)]
 fn upsert_tracks(store: State<'_, Arc<Store>>, tracks: Vec<Track>) -> Result<(), String> {
     store.upsert_tracks(tracks)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn update_track(store: State<'_, Arc<Store>>, id: String, patch: Value) -> Result<(), String> {
     store.update_track(&id, patch)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn toggle_favorite(store: State<'_, Arc<Store>>, id: String) -> Result<bool, String> {
     store.toggle_favorite(&id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn delete_track(store: State<'_, Arc<Store>>, id: String) -> Result<(), String> {
     store.delete_track(&id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn upsert_playlist(
     store: State<'_, Arc<Store>>,
     playlist: services::store::Playlist,
@@ -223,12 +325,12 @@ fn upsert_playlist(
     store.upsert_playlist(playlist)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn delete_playlist(store: State<'_, Arc<Store>>, id: String) -> Result<(), String> {
     store.delete_playlist(&id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_downloads(
     store: State<'_, Arc<Store>>,
     items: Vec<services::store::DownloadItem>,
@@ -378,12 +480,12 @@ async fn download_track(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn cancel_download(engine: State<'_, Arc<DownloadEngine>>, id: String) -> bool {
     engine.cancel(&id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn cancel_all_downloads(engine: State<'_, Arc<DownloadEngine>>) -> bool {
     engine.cancel_all()
 }
@@ -392,21 +494,21 @@ fn cancel_all_downloads(engine: State<'_, Arc<DownloadEngine>>) -> bool {
 // Comandos: ventana
 // ---------------------------------------------------------------------------
 
-#[tauri::command]
+#[tauri::command(async)]
 fn hide_to_tray(app: AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.hide();
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn show_main_window(app: AppHandle) {
     show_window(&app);
 }
 
 /// Refleja el estado de reproduccion en la barra de miniaturas de la barra
 /// de tareas (boton central = reproducir / pausar).
-#[tauri::command]
+#[tauri::command(async)]
 fn set_taskbar_playback_state(app: AppHandle, playing: bool, title: Option<String>) {
     #[cfg(target_os = "windows")]
     services::taskbar::request_state_update(&app, playing, title);
@@ -419,7 +521,7 @@ fn set_taskbar_playback_state(app: AppHandle, playing: bool, title: Option<Strin
 
 /// Abre o cierra la ventana compacta del mini reproductor.
 /// Devuelve true si ha quedado abierta.
-#[tauri::command]
+#[tauri::command(async)]
 fn toggle_mini_player(app: AppHandle) -> bool {
     if let Some(existing) = app.get_webview_window("mini") {
         let _ = existing.close();
@@ -457,7 +559,7 @@ fn toggle_mini_player(app: AppHandle) -> bool {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn quit_app(app: AppHandle) {
     let store = app.state::<Arc<Store>>();
     if let Some(window) = app.get_webview_window("main") {
@@ -605,26 +707,41 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Antes que nada: cualquier panic debe quedar registrado.
+    services::diagnostics::install_panic_hook();
+
     tauri::Builder::default()
         .setup(|app| {
             let handle = app.handle().clone();
 
             // El registro se activa tambien en la version final: escribir un
             // archivo de log en %APPDATA% es lo unico que permite diagnosticar
-            // problemas en un equipo que no es el de desarrollo.
+            // problemas en un equipo que no es el de desarrollo. Ademas se
+            // duplica en un buffer en memoria para el visor de errores.
             let log_dir = paths::app_data_dir(&handle).join("logs");
+            let memory_sink = tauri_plugin_log::fern::Dispatch::new()
+                .chain(tauri_plugin_log::fern::Output::call(|record| {
+                    services::diagnostics::record(record)
+                }));
             app.handle().plugin(
                 tauri_plugin_log::Builder::default()
                     .level(log::LevelFilter::Info)
+                    .max_file_size(2 * 1024 * 1024)
+                    .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(5))
                     .targets([
                         tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
                         tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
                             path: log_dir,
                             file_name: Some("audionave".to_string()),
                         }),
+                        tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Dispatch(
+                            memory_sink,
+                        )),
                     ])
                     .build(),
             )?;
+
+            services::diagnostics::spawn_main_thread_watchdog(handle.clone());
 
             // 1. Estado persistente en %APPDATA%.
             let data_dir = paths::app_data_dir(&handle);
@@ -654,14 +771,24 @@ pub fn run() {
                 paths::stage_ytdlp(&bin_handle);
             });
 
-            // 4. Restaurar geometria de la ventana.
+            // 4. Restaurar geometria de la ventana, ajustada al area de trabajo
+            //    (descarta posiciones fuera de pantalla y respeta la barra de
+            //    tareas de Windows aunque este en un costado).
             if let (Some(window), Some(state)) = (
                 app.get_webview_window("main"),
                 store.settings().window.clone(),
             ) {
                 if state.width > 200 && state.height > 200 {
-                    let _ = window.set_size(tauri::PhysicalSize::new(state.width, state.height));
-                    let _ = window.set_position(tauri::PhysicalPosition::new(state.x, state.y));
+                    match fit_to_work_area(&handle, &state) {
+                        Some((x, y, width, height)) => {
+                            let _ = window.set_size(tauri::PhysicalSize::new(width, height));
+                            let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+                        }
+                        None => {
+                            log::warn!("geometria guardada descartada: no hay monitor disponible");
+                            let _ = window.center();
+                        }
+                    }
                     if state.maximized {
                         let _ = window.maximize();
                     }
@@ -750,6 +877,11 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             frontend_log,
+            get_log_entries,
+            clear_log_entries,
+            get_log_dir,
+            run_health_check,
+            repair_health,
             get_snapshot,
             get_status,
             save_settings,

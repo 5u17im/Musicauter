@@ -1,4 +1,5 @@
 import { Icon } from "./ui/Icon";
+import { WindowControls } from "./WindowControls";
 import type { AppView } from "../types";
 
 interface Props {
@@ -10,7 +11,7 @@ interface Props {
 
 export function TopBar({ searchQuery, onSearchChange, onOpenAddModal, onNavigate }: Props) {
   return (
-    <header className="topbar">
+    <header className="topbar" data-tauri-drag-region>
       <button className="brand" onClick={() => onNavigate("library")} aria-label="Ir al inicio">
         <span className="brand-mark" aria-hidden="true">
           <Icon icon="solar:vinyl-bold" size={22} />
@@ -39,6 +40,8 @@ export function TopBar({ searchQuery, onSearchChange, onOpenAddModal, onNavigate
         )}
       </div>
 
+      <div className="topbar-drag" data-tauri-drag-region aria-hidden="true" />
+
       <div className="top-actions">
         <button
           className="btn btn-ghost btn-sm"
@@ -49,6 +52,8 @@ export function TopBar({ searchQuery, onSearchChange, onOpenAddModal, onNavigate
           <span>Añadir URL</span>
         </button>
       </div>
+
+      <WindowControls />
     </header>
   );
 }

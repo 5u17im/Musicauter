@@ -7,6 +7,7 @@ import {
   setTaskbarPlaybackState,
 } from "./api";
 import { AddPlaylistModal } from "./components/AddPlaylistModal";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { PlayerBar } from "./components/PlayerBar";
 import { QueueDrawer } from "./components/QueueDrawer";
 import { Sidebar } from "./components/Sidebar";
@@ -131,17 +132,19 @@ function AppInner() {
         <Sidebar active={view} onNavigate={setView} stats={stats} />
 
         <main className="app-main">
-          {view === "now-playing" && <NowPlayingView />}
-          {view === "library" && <LibraryView searchQuery={searchQuery} />}
-          {view === "playlists" && (
-            <PlaylistsView onOpenAddModal={() => setIsAddModalOpen(true)} />
-          )}
-          {view === "downloads" && <DownloadsView />}
-          {view === "favorites" && <FavoritesView />}
-          {view === "discover" && <DiscoverView />}
-          {view === "settings" && (
-            <SettingsView theme={theme} onThemeChange={setTheme} />
-          )}
+          <ErrorBoundary scope={`la vista "${view}"`} resetKey={view}>
+            {view === "now-playing" && <NowPlayingView />}
+            {view === "library" && <LibraryView searchQuery={searchQuery} />}
+            {view === "playlists" && (
+              <PlaylistsView onOpenAddModal={() => setIsAddModalOpen(true)} />
+            )}
+            {view === "downloads" && <DownloadsView />}
+            {view === "favorites" && <FavoritesView />}
+            {view === "discover" && <DiscoverView />}
+            {view === "settings" && (
+              <SettingsView theme={theme} onThemeChange={setTheme} />
+            )}
+          </ErrorBoundary>
         </main>
       </div>
 

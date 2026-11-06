@@ -1,4 +1,6 @@
 pub mod catalog;
+pub mod diagnostics;
+pub mod health;
 pub mod media_server;
 pub mod paths;
 pub mod shell;

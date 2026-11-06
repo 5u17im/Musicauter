@@ -65,7 +65,7 @@
 /* Panel Drawer de Cola */
 .queue-drawer {
   position: fixed;
-  top: 0;
+  top: var(--topbar-h);
   right: 0;
   bottom: var(--player-h);
   width: 24rem;
